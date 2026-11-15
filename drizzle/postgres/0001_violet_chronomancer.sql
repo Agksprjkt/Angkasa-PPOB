@@ -1,0 +1,2 @@
+ALTER TABLE "balance_ledger" ADD COLUMN "actorId" text;--> statement-breakpoint
+ALTER TABLE "balance_ledger" ADD CONSTRAINT "balance_ledger_actorId_user_id_fk" FOREIGN KEY ("actorId") REFERENCES "public"."user"("id") ON DELETE set null ON UPDATE no action;

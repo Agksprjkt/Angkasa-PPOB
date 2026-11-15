@@ -1,0 +1,12 @@
+.git
+.next
+node_modules
+.data
+secrets
+backups
+.env*
+!.env.example
+*.dump
+*.tar.gz
+npm-debug.log*
+tsconfig.tsbuildinfo

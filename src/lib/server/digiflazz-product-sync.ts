@@ -1,0 +1,274 @@
+import 'server-only';
+
+import { randomUUID } from 'node:crypto';
+import { sql } from 'drizzle-orm';
+import { calculateDigiflazzSellPrices } from '@/lib/digiflazz-product-pricing';
+import {
+  getNextDigiflazzProductSyncAt,
+  isDigiflazzProductSyncDue,
+} from '@/lib/digiflazz-product-sync-schedule';
+import { fetchDigiflazzPriceList } from '@/lib/digiflazz';
+import { getDatabase } from '@/lib/server/db/client';
+import {
+  productProviderSettings,
+  products as productTable,
+} from '@/lib/server/db/schema';
+import {
+  getDigiflazzAutoSyncConfig,
+  getDigiflazzConfig,
+  saveDigiflazzAutoSyncState,
+  type DigiflazzAutoSyncResult,
+} from '@/lib/server/integration-settings';
+import { acquireRedisLease } from '@/lib/server/redis';
+import type { ProductCategory } from '@/types/ppob';
+
+const syncLockKey = 'ppob:lock:digiflazz-product-sync';
+const syncLockTtlMs = 10 * 60_000;
+let localSyncRunning = false;
+
+function getCategory(value: unknown): ProductCategory | null {
+  if (typeof value !== 'string') return null;
+  const category = value.toLocaleLowerCase('id-ID').replace(/[^a-z]/g, '');
+  if (category.includes('pulsa')) return 'pulsa';
+  if (category.includes('data') || category.includes('internet')) return 'data';
+  if (category.includes('voucher')) return 'voucher';
+  if (category.includes('pln') || category.includes('listrik')) return 'pln';
+  if (category.includes('tagihan') || category.includes('pascabayar')) return 'tagihan';
+  if (category.includes('ewallet') || category.includes('emoney') || category.includes('uangelektronik')) {
+    return 'ewallet';
+  }
+  if (category.includes('game')) return 'game';
+  return null;
+}
+
+function isProviderUnavailable(value: unknown) {
+  return value === false || value === 'false' || value === 0;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+export async function syncDigiflazzProducts(): Promise<DigiflazzAutoSyncResult> {
+  const config = await getDigiflazzConfig();
+  if (
+    !config.username ||
+    !config.apiKey ||
+    (config.mode !== 'sandbox' && config.mode !== 'production')
+  ) {
+    throw new Error('DIGIFLAZZ_CREDENTIALS_NOT_CONFIGURED');
+  }
+
+  const [remoteProducts, databaseProducts, providerSettings] = await Promise.all([
+    fetchDigiflazzPriceList({
+      username: config.username,
+      apiKey: config.apiKey,
+      mode: config.mode === 'production' ? 'production' : 'sandbox',
+    }),
+    getDatabase().select().from(productTable),
+    getDatabase().select().from(productProviderSettings),
+  ]);
+  const db = getDatabase();
+  const existingProducts = new Map(
+    databaseProducts.map((product) => [product.vendorCode, product]),
+  );
+  const pricingSettings = new Map(
+    providerSettings.map((setting) => [
+      `${setting.category}:${setting.operator.toLocaleLowerCase('id-ID')}`,
+      setting,
+    ]),
+  );
+  const synced = new Map<string, {
+    id: string;
+    vendorCode: string;
+    name: string;
+    category: ProductCategory;
+    operator: string;
+    description: string;
+    basePrice: number;
+    sellPriceUser: number;
+    sellPriceAgent: number;
+    compareAtPrice: number | null;
+    status: 'active' | 'inactive';
+    vendor: 'Digiflazz';
+  }>();
+  let skipped = 0;
+
+  for (const rawProduct of remoteProducts.products) {
+    const source = asRecord(rawProduct);
+    if (!source) {
+      skipped += 1;
+      continue;
+    }
+
+    const vendorCode = source.buyer_sku_code;
+    const name = source.product_name;
+    const operator = source.brand;
+    const basePrice = source.price;
+    const category = getCategory(source.category);
+    if (
+      typeof vendorCode !== 'string' || !vendorCode.trim() || vendorCode.length > 100 ||
+      typeof name !== 'string' || !name.trim() || name.length > 200 ||
+      typeof operator !== 'string' || !operator.trim() || operator.length > 200 ||
+      typeof basePrice !== 'number' || !Number.isSafeInteger(basePrice) || basePrice < 0 ||
+      !category
+    ) {
+      skipped += 1;
+      continue;
+    }
+
+    const existing = existingProducts.get(vendorCode);
+    if (existing && existing.vendor !== 'Digiflazz') {
+      skipped += 1;
+      continue;
+    }
+    const normalizedOperator = operator.trim();
+    const pricing = pricingSettings.get(
+      `${category}:${normalizedOperator.toLocaleLowerCase('id-ID')}`,
+    );
+    const sellPrices = calculateDigiflazzSellPrices(
+      basePrice,
+      existing,
+      pricing,
+    );
+    const productStatus = isProviderUnavailable(source.buyer_product_status) ||
+      isProviderUnavailable(source.seller_product_status)
+      ? 'inactive'
+      : existing?.status ?? 'inactive';
+    const description = typeof source.desc === 'string' ? source.desc.slice(0, 1000) : '';
+
+    synced.set(vendorCode, {
+      id: existing?.id ?? randomUUID(),
+      vendorCode,
+      name: name.trim(),
+      category,
+      operator: normalizedOperator,
+      description,
+      basePrice,
+      ...sellPrices,
+      compareAtPrice: existing?.compareAtPrice ?? null,
+      status: productStatus,
+      vendor: 'Digiflazz',
+    });
+  }
+
+  const rows = [...synced.values()];
+  await db.transaction(async (tx) => {
+    for (let index = 0; index < rows.length; index += 50) {
+      const batch = rows.slice(index, index + 50);
+      await tx
+        .insert(productTable)
+        .values(batch)
+        .onConflictDoUpdate({
+          target: productTable.vendorCode,
+          set: {
+            name: sql`excluded."name"`,
+            category: sql`excluded."category"`,
+            operator: sql`excluded."operator"`,
+            description: sql`excluded."description"`,
+            basePrice: sql`excluded."basePrice"`,
+            sellPriceUser: sql`excluded."sellPriceUser"`,
+            sellPriceAgent: sql`excluded."sellPriceAgent"`,
+            status: sql`excluded."status"`,
+            updatedAt: sql`excluded."updatedAt"`,
+          },
+        });
+    }
+  });
+
+  const created = rows.filter((product) => !existingProducts.has(product.vendorCode)).length;
+  return {
+    total: remoteProducts.total,
+    synced: rows.length,
+    created,
+    updated: rows.length - created,
+    skipped,
+  };
+}
+
+async function runWithSyncLock<T>(
+  task: () => Promise<T>,
+): Promise<{ result: T } | { skipped: 'SYNC_ALREADY_RUNNING' }> {
+  if (localSyncRunning) return { skipped: 'SYNC_ALREADY_RUNNING' };
+  localSyncRunning = true;
+  let lease: Awaited<ReturnType<typeof acquireRedisLease>> = null;
+  try {
+    lease = await acquireRedisLease(syncLockKey, syncLockTtlMs);
+    if (lease && !lease.acquired) return { skipped: 'SYNC_ALREADY_RUNNING' };
+    return { result: await task() };
+  } finally {
+    localSyncRunning = false;
+    await lease?.release?.();
+  }
+}
+
+export async function runDigiflazzProductSync(
+  source: 'manual' | 'scheduled',
+  now = new Date(),
+): Promise<
+  | { result: DigiflazzAutoSyncResult }
+  | { skipped: 'SYNC_ALREADY_RUNNING' | 'SYNC_NOT_DUE' }
+> {
+  const locked = await runWithSyncLock(async () => {
+    const schedule = await getDigiflazzAutoSyncConfig();
+    if (
+      source === 'scheduled' &&
+      !isDigiflazzProductSyncDue(schedule.enabled, schedule.nextRunAt, now)
+    ) {
+      return { skipped: 'SYNC_NOT_DUE' as const };
+    }
+
+    const startTime = now.toISOString();
+    await saveDigiflazzAutoSyncState({
+      lastRunAt: startTime,
+      lastStatus: 'running',
+      clearLastError: true,
+      clearLastResult: true,
+    });
+
+    try {
+      const result = await syncDigiflazzProducts();
+      const completedAt = new Date();
+      const nextRunAt = schedule.enabled
+        ? getNextDigiflazzProductSyncAt(
+            completedAt,
+            schedule.intervalDays,
+          ).toISOString()
+        : '';
+      await saveDigiflazzAutoSyncState({
+        lastRunAt: completedAt.toISOString(),
+        lastStatus: 'success',
+        lastResult: result,
+        ...(schedule.enabled
+          ? { nextRunAt }
+          : { clearNextRunAt: true }),
+        clearLastError: true,
+      });
+      return { result };
+    } catch (error) {
+      const completedAt = new Date();
+      const nextRunAt = schedule.enabled
+        ? getNextDigiflazzProductSyncAt(
+            completedAt,
+            schedule.intervalDays,
+          ).toISOString()
+        : '';
+      await saveDigiflazzAutoSyncState({
+        lastRunAt: completedAt.toISOString(),
+        lastStatus: 'failed',
+        lastError: error instanceof Error
+          ? error.message.slice(0, 1000)
+          : 'Unknown Digiflazz sync error',
+        ...(schedule.enabled
+          ? { nextRunAt }
+          : { clearNextRunAt: true }),
+        clearLastResult: true,
+      });
+      throw error;
+    }
+  });
+  if ('skipped' in locked) return locked;
+  return locked.result;
+}

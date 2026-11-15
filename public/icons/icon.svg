@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0F2C59" />
+      <stop offset="100%" stop-color="#07172F" />
+    </linearGradient>
+    <linearGradient id="boltGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34D399" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="128" fill="url(#bgGrad)"/>
+  <circle cx="256" cy="256" r="180" fill="#1E40AF" fill-opacity="0.2" stroke="#3B82F6" stroke-width="4" stroke-opacity="0.3"/>
+  <!-- Wallet / Card Shape with Lightning -->
+  <g transform="translate(106, 126)">
+    <rect x="0" y="40" width="300" height="190" rx="24" fill="#1E3A8A" stroke="#60A5FA" stroke-width="6"/>
+    <path d="M 0 95 L 300 95" stroke="#0F2C59" stroke-width="12"/>
+    <rect x="210" y="125" width="80" height="50" rx="12" fill="#10B981"/>
+    <circle cx="235" cy="150" r="8" fill="#FFFFFF"/>
+    <!-- Lightning Bolt -->
+    <path d="M 125 10 L 85 130 L 145 130 L 115 220 L 195 90 L 140 90 Z" fill="url(#boltGrad)" stroke="#FFFFFF" stroke-width="4" stroke-linejoin="round"/>
+  </g>
+</svg>
