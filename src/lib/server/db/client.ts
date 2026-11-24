@@ -49,17 +49,24 @@ function readUrlFile(path: string) {
 
 // Runtime uses the pooled URL; migrations use the direct URL, because PgBouncer
 // in transaction mode cannot run the advisory locks Drizzle migrations take.
+// A single self-hosted server has no pooler, so a missing direct URL falls back
+// to the file that already holds the only connection string.
 function getPostgresTargets() {
   const config = getDatabaseConfig();
   const resolved = resolveDatabaseUrls(
     config,
     resolveMigrateOnStartup(process.env.DATABASE_MIGRATE_ON_STARTUP, config.migrateOnStartup),
-  );  const url = process.env.DATABASE_URL_FILE
-    ? readUrlFile(process.env.DATABASE_URL_FILE)
+  );
+  const urlFile = process.env.DATABASE_URL_FILE;
+  const url = urlFile
+    ? readUrlFile(urlFile)
     : assertPostgresUrl(process.env.DATABASE_URL?.trim() || resolved.url);
-  const urlDirect = process.env.DATABASE_URL_DIRECT_FILE
-    ? readUrlFile(process.env.DATABASE_URL_DIRECT_FILE)
-    : assertPostgresUrl(process.env.DATABASE_URL_DIRECT?.trim() || resolved.urlDirect);
+  const directFile = process.env.DATABASE_URL_DIRECT_FILE;
+  const urlDirect = directFile
+    ? readUrlFile(directFile)
+    : urlFile
+      ? url
+      : assertPostgresUrl(process.env.DATABASE_URL_DIRECT?.trim() || resolved.urlDirect);
 
   return {
     url,
