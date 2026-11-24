@@ -603,21 +603,6 @@ export default function IntegrationSettingsPanel({
       {section === 'integrations' && (
       <>
       <Card>
-        <div className="space-y-3 p-5">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="font-semibold text-slate-900">Database & penyimpanan</h3>
-            <Badge variant="outline">SQLite lokal</Badge>
-          </div>
-          <p className="text-sm text-slate-600">
-            Database dan unggahan aktif disimpan pada folder <code>.data</code>.
-            Gunakan volume persisten dan backup rutin saat deploy dengan Docker.
-          </p>
-          <p className="text-xs text-slate-500">
-            Neon, Cloudflare D1, dan R2 belum terhubung ke runtime aplikasi ini.
-          </p>
-        </div>
-      </Card>
-      <Card>
         <details className="group">
           <IntegrationSummary title="WhatsApp OTP" active={isWhatsAppActive} />
           <form
