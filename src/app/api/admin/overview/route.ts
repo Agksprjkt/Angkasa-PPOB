@@ -2,6 +2,7 @@ import { and, count, desc, eq, gte, lt, sql } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import { isAdministrator } from '@/lib/server/authorization';
 import { getDatabase } from '@/lib/server/db/client';
+import { sqlTimestamp } from '@/lib/server/rate-limit';
 import {
   balanceLedger,
   deposits,
@@ -73,8 +74,9 @@ export async function GET(request: NextRequest) {
         db.select({ count: count() }).from(products).where(eq(products.status, 'active')),
         db.select({
           count: count(),
-          overdueCount: sql<number>`coalesce(sum(case when ${transactions.createdAt} < ${new Date(now - 5 * 60 * 1000)} then 1 else 0 end), 0)`,
-          oldestCreatedAt: sql<number | null>`min(${transactions.createdAt})`,
+          overdueCount: sql<number>`coalesce(sum(case when ${transactions.createdAt} < ${sqlTimestamp(new Date(now - 5 * 60 * 1000))} then 1 else 0 end), 0)`,
+          // Postgres returns a Date, SQLite an epoch number; the cast covers both.
+          oldestCreatedAt: sql<number | Date | null>`min(${transactions.createdAt})`,
         }).from(transactions).where(eq(transactions.status, 'pending')),
         db
           .select({
