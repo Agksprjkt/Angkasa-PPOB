@@ -2,8 +2,16 @@ import 'server-only';
 
 import { lt, sql } from 'drizzle-orm';
 import { getDatabase } from '@/lib/server/db/client';
+import { databaseMode } from '@/lib/server/db/database-mode';
 import { orderLookupRateLimits } from '@/lib/server/db/schema';
 import { consumeRedisRateLimit } from '@/lib/server/redis';
+
+// Raw sql parameters bypass Drizzle's column encoders, so a Date reaches the
+// driver unencoded and postgres-js rejects it. Postgres timestamptz compares
+// fine against an ISO string, while the SQLite schema stores epoch millis.
+export function sqlTimestamp(date: Date) {
+  return databaseMode === 'postgres' ? date.toISOString() : date.getTime();
+}
 
 // Redis is optional; without it the DB table keeps the limit enforced instead of
 // silently allowing every request.
@@ -13,6 +21,8 @@ export async function consumeRateLimit(key: string, limit: number, windowMs: num
 
   const now = new Date();
   const expiresAt = new Date(now.getTime() + windowMs);
+  const nowRaw = sqlTimestamp(now);
+  const expiresAtRaw = sqlTimestamp(expiresAt);
   try {
     const [entry] = await getDatabase()
       .insert(orderLookupRateLimits)
@@ -20,9 +30,9 @@ export async function consumeRateLimit(key: string, limit: number, windowMs: num
       .onConflictDoUpdate({
         target: orderLookupRateLimits.key,
         set: {
-          attempts: sql`CASE WHEN ${orderLookupRateLimits.expiresAt} <= ${now} THEN 1 ELSE ${orderLookupRateLimits.attempts} + 1 END`,
-          windowStartedAt: sql`CASE WHEN ${orderLookupRateLimits.expiresAt} <= ${now} THEN ${now} ELSE ${orderLookupRateLimits.windowStartedAt} END`,
-          expiresAt: sql`CASE WHEN ${orderLookupRateLimits.expiresAt} <= ${now} THEN ${expiresAt} ELSE ${orderLookupRateLimits.expiresAt} END`,
+          attempts: sql`CASE WHEN ${orderLookupRateLimits.expiresAt} <= ${nowRaw} THEN 1 ELSE ${orderLookupRateLimits.attempts} + 1 END`,
+          windowStartedAt: sql`CASE WHEN ${orderLookupRateLimits.expiresAt} <= ${nowRaw} THEN ${nowRaw} ELSE ${orderLookupRateLimits.windowStartedAt} END`,
+          expiresAt: sql`CASE WHEN ${orderLookupRateLimits.expiresAt} <= ${nowRaw} THEN ${expiresAtRaw} ELSE ${orderLookupRateLimits.expiresAt} END`,
           updatedAt: now,
         },
       })

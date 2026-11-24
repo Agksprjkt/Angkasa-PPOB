@@ -6,6 +6,7 @@ import {
   hashOrderLookupValue,
 } from '@/lib/server/order-lookup';
 import { getDatabase } from '@/lib/server/db/client';
+import { sqlTimestamp } from '@/lib/server/rate-limit';
 import { consumeRedisRateLimit } from '@/lib/server/redis';
 import { invoices, orderLookupRateLimits, transactions } from '@/lib/server/db/schema';
 
@@ -34,6 +35,8 @@ async function consumeRateLimit(
   now: Date,
 ) {
   const expiry = new Date(now.getTime() + rateWindowMs);
+  const nowRaw = sqlTimestamp(now);
+  const expiryRaw = sqlTimestamp(expiry);
   const [entry] = await tx
     .insert(orderLookupRateLimits)
     .values({
@@ -46,9 +49,9 @@ async function consumeRateLimit(
     .onConflictDoUpdate({
       target: orderLookupRateLimits.key,
       set: {
-        attempts: sql`CASE WHEN ${orderLookupRateLimits.expiresAt} <= ${now} THEN 1 ELSE ${orderLookupRateLimits.attempts} + 1 END`,
-        windowStartedAt: sql`CASE WHEN ${orderLookupRateLimits.expiresAt} <= ${now} THEN ${now} ELSE ${orderLookupRateLimits.windowStartedAt} END`,
-        expiresAt: sql`CASE WHEN ${orderLookupRateLimits.expiresAt} <= ${now} THEN ${expiry} ELSE ${orderLookupRateLimits.expiresAt} END`,
+        attempts: sql`CASE WHEN ${orderLookupRateLimits.expiresAt} <= ${nowRaw} THEN 1 ELSE ${orderLookupRateLimits.attempts} + 1 END`,
+        windowStartedAt: sql`CASE WHEN ${orderLookupRateLimits.expiresAt} <= ${nowRaw} THEN ${nowRaw} ELSE ${orderLookupRateLimits.windowStartedAt} END`,
+        expiresAt: sql`CASE WHEN ${orderLookupRateLimits.expiresAt} <= ${nowRaw} THEN ${expiryRaw} ELSE ${orderLookupRateLimits.expiresAt} END`,
         updatedAt: now,
       },
     })

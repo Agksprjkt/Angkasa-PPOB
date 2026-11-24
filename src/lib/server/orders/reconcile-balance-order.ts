@@ -203,7 +203,9 @@ export async function listReconciliationCandidates(batchSize: number, updatedBef
       eq(transactions.paymentMethod, 'balance'),
       // Orders parked for admin review must not be re-queried at the provider.
       eq(transactions.needsManualReview, false),
-      sql`${transactions.updatedAt} < ${updatedBefore}`,
+      // A typed Drizzle operator, not a raw sql template: the raw form binds the
+      // Date without a type mapping and postgres-js then fails to encode it.
+      lt(transactions.updatedAt, updatedBefore),
       or(
         eq(products.vendor, 'Digiflazz'),
         hasReconciliationSku,
