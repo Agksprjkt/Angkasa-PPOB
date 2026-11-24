@@ -101,12 +101,17 @@ services:
   # deployment does not try to obtain a certificate: `docker compose --profile tls up -d`.
   # It reaches the app over the default network; the app port stays bound to host
   # loopback so nothing is exposed directly.
+  #
+  # PPOB_SITE_ADDRESS decides the scheme:
+  #   http://1.2.3.4   plain HTTP on port 80 (IP only, no certificate possible)
+  #   example.com      automatic HTTPS with a Let's Encrypt certificate
+  # Switching to a real domain is a one-line change with no other edits.
   caddy:
     image: caddy:2-alpine
     profiles:
       - tls
     environment:
-      PPOB_DOMAIN: ${PPOB_DOMAIN:?Set PPOB_DOMAIN in .env to the public hostname}
+      PPOB_SITE_ADDRESS: ${PPOB_SITE_ADDRESS:-http://localhost}
       PPOB_ACME_EMAIL: ${PPOB_ACME_EMAIL:-}
     ports:
       - "80:80"

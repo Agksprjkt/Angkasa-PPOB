@@ -5,9 +5,19 @@ import { getStorefrontEnabled } from '@/lib/server/system-config';
 // always runs this proxy on the Node.js runtime, which is why the switch can be
 // read from the system-config file.
 //
-// The API stays reachable on purpose: an external frontend consumes the same
-// endpoints and must keep working while the built-in storefront is closed.
-const publicPrefixes = ['/admin', '/api', '/_next', '/icons', '/favicon.ico'];
+// Closing the storefront closes the *shop*, not people's accounts: the admin
+// area, the customer/agent dashboards, and the API stay reachable. Each of those
+// already enforces its own session check, so allowing the path here leaks
+// nothing.
+const publicPrefixes = [
+  '/admin',
+  '/dashboard',
+  '/agent',
+  '/api',
+  '/_next',
+  '/icons',
+  '/favicon.ico',
+];
 
 const staticFilePattern = /\.(?:svg|png|jpg|jpeg|webp|gif|ico|txt|xml|webmanifest|json|css|js|map)$/i;
 

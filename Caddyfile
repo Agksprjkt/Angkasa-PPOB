@@ -1,6 +1,10 @@
-# Caddy reverse proxy for the PPOB app. Certificates come from Let's Encrypt
-# automatically, so DNS for PPOB_DOMAIN must already point at this host and ports
-# 80/443 must be reachable.
+# Caddy reverse proxy for the PPOB app.
+#
+# PPOB_SITE_ADDRESS decides the scheme:
+#   http://1.2.3.4   -> plain HTTP on port 80, no certificate (IP-only hosting)
+#   example.com      -> automatic HTTPS with a Let's Encrypt certificate
+# For HTTPS the DNS A record must already point here and ports 80/443 must be
+# reachable from the internet.
 #
 # The app listens on 127.0.0.1:3000 on the host, but Caddy reaches it by service
 # name over the Compose network, which keeps the app port unpublished.
@@ -12,7 +16,7 @@
 	}
 }
 
-{$PPOB_DOMAIN} {
+{$PPOB_SITE_ADDRESS} {
 	encode zstd gzip
 
 	# No HSTS header here: next.config.mjs already sets it, and two copies of the

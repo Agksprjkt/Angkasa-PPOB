@@ -269,7 +269,7 @@ APP_IMAGE=ghcr.io/agksprjkt/angkasa-ppob:sha-<full-commit>
 BETTER_AUTH_URL=https://<domain>
 BETTER_AUTH_SECRET=<new random value>
 PAYMENT_RECONCILER_SECRET=<new random value, at least 32 bytes>
-PPOB_DOMAIN=<domain>
+PPOB_SITE_ADDRESS=<domain>
 PPOB_ACME_EMAIL=<your email>
 ```
 
