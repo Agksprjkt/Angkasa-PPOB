@@ -14,13 +14,14 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { LoadingState } from '@/components/ui/crystal-loader';
 import { Label } from '@/components/ui/label';
 import { normalizePhone } from '@/lib/phone';
 
 type DepositItem = {
   id: string;
   amount: number;
-  type: 'bank_transfer' | 'static_qris' | 'qrisly';
+  type: 'bank_transfer' | 'ewallet' | 'static_qris' | 'qrisly';
   paymentMethodLabel: string | null;
   status: 'pending' | 'approved' | 'rejected';
   adminNote?: string | null;
@@ -267,7 +268,7 @@ export default function DepositModal({ open, onOpenChange }: {
           </p>
         ) : (
           <div className="max-h-[70vh] space-y-4 overflow-y-auto pr-1">
-            {isLoading ? <p className="text-sm text-slate-500">Memuat metode pembayaran…</p> : null}
+            {isLoading ? <LoadingState message="Memuat metode pembayaran…" /> : null}
             {activeDeposit && (
               <section className="space-y-3 rounded-xl border border-slate-200 p-4">
                 <div className="flex items-center justify-between gap-2">
@@ -338,7 +339,7 @@ export default function DepositModal({ open, onOpenChange }: {
             {methods.length > 0 ? (
               <form onSubmit={(event) => void submitManualDeposit(event)} className="space-y-3 rounded-xl border border-slate-200 p-4">
                 <div className="space-y-1.5">
-                  <Label htmlFor="deposit-method">Transfer bank atau QRIS statis</Label>
+                  <Label htmlFor="deposit-method">Transfer bank, e-wallet, atau QRIS statis</Label>
                   <select
                     id="deposit-method"
                     className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
@@ -349,7 +350,7 @@ export default function DepositModal({ open, onOpenChange }: {
                     {methods.map((method) => <option key={method.id} value={method.id}>{method.label}</option>)}
                   </select>
                 </div>
-                {selectedMethod?.type === 'bank_transfer' && (
+                {(selectedMethod?.type === 'bank_transfer' || selectedMethod?.type === 'ewallet') && (
                   <div className="rounded-lg bg-slate-50 p-3 text-sm">
                     <p className="font-semibold">{selectedMethod.bankName} · {selectedMethod.accountNumber}</p>
                     <p className="text-slate-600">a.n. {selectedMethod.accountHolder}</p>

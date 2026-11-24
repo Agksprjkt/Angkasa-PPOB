@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   classifyQrislyPayment,
   isValidQrislyAmount,
+  isWithinLateSettlementGrace,
   parseDepositAmount,
 } from '../src/lib/deposit-validation.ts';
 
@@ -26,4 +27,23 @@ test('classifies paid only when provider and expected amounts match', () => {
   assert.equal(classifyQrislyPayment('paid', 4_999, 5_000), 'amount_mismatch');
   assert.equal(classifyQrislyPayment('expired', 5_000, 5_000), 'failed');
   assert.equal(classifyQrislyPayment('processing', 5_000, 5_000), 'pending');
+});
+
+test('keeps a pending payment inside the late-settlement grace window', () => {
+  const expiresAt = new Date('2026-01-01T10:00:00.000Z');
+  const graceMs = 60 * 60_000;
+  // A pending provider status must not expire the invoice inside the window,
+  // otherwise a QRIS scan that settles late is charged without fulfilment.
+  assert.equal(
+    isWithinLateSettlementGrace(expiresAt, new Date('2026-01-01T10:00:01.000Z'), graceMs),
+    true,
+  );
+  assert.equal(
+    isWithinLateSettlementGrace(expiresAt, new Date('2026-01-01T10:59:59.000Z'), graceMs),
+    true,
+  );
+  assert.equal(
+    isWithinLateSettlementGrace(expiresAt, new Date('2026-01-01T11:00:00.000Z'), graceMs),
+    false,
+  );
 });

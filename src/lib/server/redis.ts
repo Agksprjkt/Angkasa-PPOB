@@ -3,6 +3,8 @@ import 'server-only';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createClient, type RedisClientType } from 'redis';
+import { buildRedisUrl } from '@/lib/system-config-core';
+import { getSystemConfig } from './system-config';
 
 type RedisClient = RedisClientType;
 type RedisLease = {
@@ -13,21 +15,25 @@ type RedisLease = {
 let client: RedisClient | null = null;
 let connecting: Promise<RedisClient | null> | null = null;
 
-function isConfigured() {
-  return Boolean(process.env.REDIS_URL);
+function redisTarget() {
+  const config = getSystemConfig().redis;
+  const url = process.env.REDIS_URL?.trim() || buildRedisUrl(config);
+  if (!config.enabled || !url) return null;
+  const password = process.env.REDIS_PASSWORD_FILE
+    ? readFileSync(process.env.REDIS_PASSWORD_FILE, 'utf8').trim()
+    : config.password || undefined;
+  return { url, password };
 }
 
 async function getConnectedClient() {
-  if (!isConfigured()) return null;
+  const target = redisTarget();
+  if (!target) return null;
   if (client?.isOpen) return client;
   if (connecting) return connecting;
 
-  const password = process.env.REDIS_PASSWORD_FILE
-    ? readFileSync(process.env.REDIS_PASSWORD_FILE, 'utf8').trim()
-    : undefined;
   const nextClient = createClient({
-    url: process.env.REDIS_URL,
-    password,
+    url: target.url,
+    password: target.password,
     socket: {
       connectTimeout: 1_000,
       reconnectStrategy: false,
@@ -50,6 +56,16 @@ async function getConnectedClient() {
     })
     .finally(() => { connecting = null; });
   return connecting;
+}
+
+export async function pingRedis() {
+  const redis = await getConnectedClient();
+  if (!redis) return null;
+  try {
+    return (await redis.ping()) === 'PONG';
+  } catch {
+    return null;
+  }
 }
 
 export async function consumeRedisRateLimit(

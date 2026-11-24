@@ -26,6 +26,7 @@ import {
   INITIAL_PG_SETTINGS,
 } from '@/data/mock-data';
 import { DEFAULT_STORE_NAME } from '@/lib/store-branding';
+import { normalizeSocialLinks, type NormalizedSocialLink } from '@/lib/social-links';
 
 export interface ToastMessage {
   id: string;
@@ -36,7 +37,11 @@ export interface ToastMessage {
 
 interface PPOBContextType {
   storeName: string;
+  storeLogoUrl: string | null;
+  storeTagline: string;
+  storeSocialLinks: NormalizedSocialLink[];
   updateStoreName: (name: string) => void;
+  refreshStoreIdentity: () => Promise<void>;
   // Auth & Roles
   currentUser: UserAccount | null;
   users: UserAccount[];
@@ -54,7 +59,8 @@ interface PPOBContextType {
 
   // Products & CRUD
   products: CatalogProduct[];
-  refreshProducts: () => Promise<void>;
+  catalogPending: boolean;
+  refreshProducts: () => Promise<void>;  refreshAdminUsers: () => Promise<void>;
   addProduct: (product: Omit<Product, 'id'>) => void;
   updateProduct: (id: string, updates: Partial<Product>) => Promise<boolean>;
   deleteProduct: (id: string) => void;
@@ -64,6 +70,7 @@ interface PPOBContextType {
   // Transactions
   transactions: Transaction[];
   transactionTotal: number;
+  transactionsPending: boolean;
   deposits: ManualDeposit[];
   depositReviewTotal: number;
   hasMoreAdminDeposits: boolean;
@@ -113,8 +120,7 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
     userId: string;
     transactions: Transaction[];
     total: number;
-  } | null>(null);
-  const [depositReview, setDepositReview] = useState<{
+  } | null>(null);  const [depositReview, setDepositReview] = useState<{
     adminId: string;
     deposits: ManualDeposit[];
     total: number;
@@ -127,6 +133,9 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
   const [pgSettings] = useState<PaymentGatewaySettings>(INITIAL_PG_SETTINGS);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [storeName, setStoreName] = useState(DEFAULT_STORE_NAME);
+  const [storeLogoUrl, setStoreLogoUrl] = useState<string | null>(null);
+  const [storeTagline, setStoreTagline] = useState('');
+  const [storeSocialLinks, setStoreSocialLinks] = useState<NormalizedSocialLink[]>([]);
   const [walletOverride, setWalletOverride] = useState<{
     userId: string;
     balance: number;
@@ -139,43 +148,73 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
     if (name.trim()) setStoreName(name.trim());
   }, []);
 
+  const loadStoreIdentity = useCallback(async (signal?: AbortSignal) => {
+    const response = await fetch('/api/store-settings', {
+      cache: 'no-store',
+      signal,
+    });
+    const result = await response.json() as {
+      storeName?: unknown;
+      tagline?: unknown;
+      logoUrl?: unknown;
+      socialLinks?: unknown;
+      error?: string;
+    };
+    if (!response.ok || typeof result.storeName !== 'string' || !result.storeName.trim()) {
+      throw new Error(result.error ?? 'Identitas toko gagal dimuat.');
+    }
+    return {
+      storeName: result.storeName.trim(),
+      tagline: typeof result.tagline === 'string' ? result.tagline : '',
+      logoUrl: typeof result.logoUrl === 'string' ? result.logoUrl : null,
+      socialLinks: normalizeSocialLinks(result.socialLinks),
+    };
+  }, []);
+
+  const refreshStoreIdentity = useCallback(async () => {
+    const identity = await loadStoreIdentity();
+    setStoreName(identity.storeName);
+    setStoreLogoUrl(identity.logoUrl);
+    setStoreTagline(identity.tagline);
+    setStoreSocialLinks(identity.socialLinks);
+  }, [loadStoreIdentity]);
+
   useEffect(() => {
     const controller = new AbortController();
-    void fetch('/api/store-settings', {
-      cache: 'no-store',
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        const result = await response.json() as { storeName?: unknown; error?: string };
-        if (!response.ok || typeof result.storeName !== 'string' || !result.storeName.trim()) {
-          throw new Error(result.error ?? 'Identitas toko gagal dimuat.');
-        }
-        return result.storeName.trim();
+    void loadStoreIdentity(controller.signal)
+      .then((identity) => {
+        if (controller.signal.aborted) return;
+        setStoreName(identity.storeName);
+        setStoreLogoUrl(identity.logoUrl);
+        setStoreTagline(identity.tagline);
+        setStoreSocialLinks(identity.socialLinks);
       })
-      .then(setStoreName)
       .catch((error: unknown) => {
         if (!controller.signal.aborted) {
           console.error('[STORE_NAME_LOAD_FAILED]', error);
         }
       });
     return () => controller.abort();
-  }, []);
+  }, [loadStoreIdentity]);
 
   const sessionUser = authSession?.user;
   const sessionUserId = sessionUser?.id ?? null;
   const sessionRole = sessionUser?.role ?? 'guest';
-  const products =
-    catalog?.userId === sessionUserId && catalog.role === sessionRole
-      ? catalog.products
-      : [];
-  const transactions =
-    sessionUserId && transactionHistory?.userId === sessionUserId
-      ? transactionHistory.transactions
-      : [];
-  const transactionTotal =
-    sessionUserId && transactionHistory?.userId === sessionUserId
-      ? transactionHistory.total
-      : transactions.length;
+  const catalogReady = Boolean(
+    catalog && catalog.userId === sessionUserId && catalog.role === sessionRole,
+  );
+  const catalogPending = authPending || !catalogReady;
+  const products = catalogReady && catalog ? catalog.products : [];
+  const transactionsReady = Boolean(
+    sessionUserId && transactionHistory?.userId === sessionUserId,
+  );
+  const transactionsPending = authPending || (Boolean(sessionUserId) && !transactionsReady);
+  const transactions = transactionsReady && transactionHistory
+    ? transactionHistory.transactions
+    : [];
+  const transactionTotal = transactionsReady && transactionHistory
+    ? transactionHistory.total
+    : transactions.length;
   const deposits =
     sessionRole === 'admin' && depositReview?.adminId === sessionUserId
       ? depositReview.deposits
@@ -283,6 +322,8 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
         if (!active) return;
         const message =
           error instanceof Error ? error.message : 'Katalog gagal dimuat.';
+        // Mark this session as settled so the skeleton does not spin forever.
+        setCatalog({ userId: sessionUserId, role: sessionRole, products: [] });
         addToast('Katalog Tidak Tersedia', message, 'warning');
       });
 
@@ -314,6 +355,7 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
         if (!active) return;
         const message =
           error instanceof Error ? error.message : 'Riwayat transaksi gagal dimuat.';
+        setTransactionHistory({ userId: sessionUserId, transactions: [], total: 0 });
         addToast('Riwayat Tidak Tersedia', message, 'warning');
       });
 
@@ -907,7 +949,11 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
     <PPOBContext.Provider
       value={{
         storeName,
+        storeLogoUrl,
+        storeTagline,
+        storeSocialLinks,
         updateStoreName,
+        refreshStoreIdentity,
         currentUser,
         refreshBalance,
         users,
@@ -920,7 +966,9 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
         balance,
         commissionBalance,
         products,
+        catalogPending,
         refreshProducts,
+    refreshAdminUsers,
         addProduct,
         updateProduct,
         deleteProduct,
@@ -928,6 +976,7 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
         syncDigiflazzPrices,
         transactions,
         transactionTotal,
+    transactionsPending,
         deposits,
         depositReviewTotal,
         hasMoreAdminDeposits,

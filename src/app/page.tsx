@@ -3,29 +3,18 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { usePPOB } from '@/context/PPOBContext';
-import { Product, ProductCategory, Transaction } from '@/types/ppob';
+import { Product, ProductCategory } from '@/types/ppob';
 import Header from '@/components/Header';
 import BottomNav from '@/components/BottomNav';
-import BalanceCard from '@/components/BalanceCard';
+import PromotionSlider from '@/components/PromotionSlider';
+import StorefrontSections from '@/components/StorefrontSections';
 import ProductCatalog from '@/components/ProductCatalog';
+import StoreFooter from '@/components/StoreFooter';
 import DirectOrderModal from '@/components/DirectOrderModal';
-import ReceiptModal from '@/components/ReceiptModal';
 import DepositModal from '@/components/DepositModal';
 import AuthModal from '@/components/AuthModal';
-import HistoryView from '@/components/HistoryView';
 import type { BeforeInstallPromptEvent } from '@/types/pwa';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
-import {
-  Receipt,
   Headphones,
 } from 'lucide-react';
 
@@ -39,23 +28,14 @@ const productCategories: ProductCategory[] = [
   'game',
 ];
 
-const productCategoryLabels: Record<ProductCategory, string> = {
-  pulsa: 'Pulsa',
-  data: 'Paket Data',
-  voucher: 'Voucher',
-  pln: 'Token Listrik',
-  tagihan: 'Tagihan',
-  ewallet: 'E-Wallet',
-  game: 'Game',
-};
-
 export default function HomePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { currentUser, isGuest, authPending, transactions, addToast } = usePPOB();
+  const { isGuest, authPending, role, storeName, storeTagline, storeSocialLinks } = usePPOB();
 
-  const [activeTab, setActiveTab] = useState<'home' | 'history' | 'orders' | 'legal'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'promo' | 'orders' | 'account'>('home');
   const requestedCategory = searchParams.get('category');
+  const catalogSearch = searchParams.get('search')?.trim() ?? '';
   const homeCategory =
     requestedCategory && productCategories.includes(requestedCategory as ProductCategory)
       ? requestedCategory as ProductCategory
@@ -69,7 +49,6 @@ export default function HomePage() {
   const [destinationNumber, setDestinationNumber] = useState<string>('');
   const [customerName, setCustomerName] = useState<string | undefined>(undefined);
   const [serverZoneId, setServerZoneId] = useState<string | undefined>(undefined);
-  const [activeReceipt, setActiveReceipt] = useState<Transaction | null>(null);
 
   const [isDepositModalOpen, setIsDepositModalOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -79,14 +58,6 @@ export default function HomePage() {
   const [deferredPrompt, setDeferredPrompt] =
     useState<BeforeInstallPromptEvent | null>(null);
   const [supportPhone, setSupportPhone] = useState('');
-
-  useEffect(() => {
-    const searchParams = new URLSearchParams(window.location.search);
-    const timeoutId = window.setTimeout(() => {
-      if (searchParams.get('tab') === 'history') setActiveTab('history');
-    }, 0);
-    return () => window.clearTimeout(timeoutId);
-  }, []);
 
   useEffect(() => {
     const handleBeforeInstallPrompt = (e: Event) => {
@@ -145,197 +116,86 @@ export default function HomePage() {
     setIsOrderModalOpen(true);
   };
 
-  const handleSelectReceipt = (transaction: Transaction) => {
-    setActiveReceipt(transaction);
-    void fetch(`/api/orders/${encodeURIComponent(transaction.id)}`, {
-      cache: 'no-store',
-    })
-      .then(async (response) => {
-        const result = await response.json() as {
-          transaction?: Transaction;
-          error?: string;
-        };
-        if (!response.ok || !result.transaction || result.transaction.id !== transaction.id) {
-          throw new Error(result.error ?? 'Detail transaksi gagal dimuat.');
-        }
-        setActiveReceipt((current) =>
-          current?.id === transaction.id ? result.transaction ?? current : current,
-        );
-      })
-      .catch((error: unknown) => {
-        addToast(
-          'Detail Belum Diperbarui',
-          error instanceof Error
-            ? `${error.message} Data terakhir yang tersedia tetap ditampilkan.`
-            : 'Data terakhir yang tersedia tetap ditampilkan.',
-          'warning',
-        );
-      });
-  };
-
-  const recentTransactions = transactions.slice(0, 4);
-
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50/70 pb-[calc(6rem+env(safe-area-inset-bottom))] font-sans text-slate-900 selection:bg-blue-600 selection:text-white">
-      {/* Top Navigation */}
-      <Header
-        onOpenAuth={() => setIsAuthModalOpen(true)}
-        onOpenHistory={() => setActiveTab('history')}
-        pwaInstallPrompt={deferredPrompt}
-        onInstallPwa={handleInstallPwa}
-      />
+    <div className="min-h-screen bg-transparent font-sans text-slate-900 selection:bg-blue-200 selection:text-slate-950">
+      <div className="relative flex min-h-screen flex-col lg:pb-0">
+        <Header
+          onOpenAuth={() => setIsAuthModalOpen(true)}
+          onOpenHome={() => {
+            setActiveTab('home');
+            router.push('/');
+          }}
+          onOpenHistory={() => router.push('/dashboard/transactions')}
+          onOpenOrders={() => {
+            setActiveTab('orders');
+            router.push('/cek-pesanan');
+          }}
+          onOpenDeposit={() =>
+            isGuest || authPending
+              ? setIsAuthModalOpen(true)
+              : setIsDepositModalOpen(true)
+          }
+          showDesktopNavigation
+          activeTab="home"
+          mobileBack={isCategoryMenu}
+          backFallback="/"
+          pwaInstallPrompt={deferredPrompt}
+          onInstallPwa={handleInstallPwa}
+        />
 
-      {/* Main Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-8">
-        {/* VIEW 3: RIWAYAT TRANSAKSI & MUTASI */}
-        {activeTab === 'history' && !authPending && (
-          <div className="space-y-6 animate-fadeIn">
-            <HistoryView
-              key={currentUser?.id ?? 'guest'}
-              onSelectReceipt={handleSelectReceipt}
-              onRequireAuth={() => setIsAuthModalOpen(true)}
-            />
-          </div>
-        )}
-
-        {/* VIEW 4: HOME (USER & GUEST STOREFRONT) */}
-        {activeTab === 'home' && (
-          <div className={`grid grid-cols-1 gap-5 lg:grid-cols-12 lg:gap-6 items-start animate-fadeIn ${
-            isCategoryMenu ? 'max-w-6xl mx-auto' : ''
-          }`}>
-            {/* Left Primary Column: Balance Card & Catalog */}
-            <div className={`${isCategoryMenu ? 'lg:col-span-12' : 'lg:col-span-8'} min-w-0 space-y-5`}>
-              {/* Balance Card or Guest Banner */}
-              {!isCategoryMenu && authPending ? (
-                <div
-                  aria-label="Memuat akun"
-                  className="h-40 animate-pulse rounded-3xl border border-slate-200 bg-white"
-                />
-              ) : !isCategoryMenu && !isGuest ? (
-                <BalanceCard
-                  onOpenDeposit={() => setIsDepositModalOpen(true)}
-                  onOpenMutations={() => setActiveTab('history')}
-                />
-              ) : !isCategoryMenu ? (
-                <div className="flex flex-col gap-3 rounded-2xl border border-blue-100 bg-blue-50/80 p-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-900">
-                      Belanja tanpa harus masuk
-                    </p>
-                    <p className="mt-0.5 text-xs text-slate-600">
-                      Buat akun jika ingin menyimpan saldo dan melihat riwayat transaksi.
-                    </p>
-                  </div>
-
-                  <Button
-                    onClick={() => setIsAuthModalOpen(true)}
-                    className="h-9 shrink-0 rounded-xl bg-blue-600 px-4 text-xs font-semibold text-white hover:bg-blue-700"
-                  >
-                    Masuk / Daftar
-                  </Button>
+        <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
+          <div className={`space-y-8 animate-fadeIn ${isCategoryMenu ? 'mx-auto max-w-6xl' : ''}`}>
+              {!isCategoryMenu && (
+                <div className="mx-auto max-w-6xl">
+                  <PromotionSlider />
                 </div>
-              ) : null}
-
-              {/* Product Catalog */}
-              {isCategoryMenu && (
-                <Breadcrumb>
-                  <BreadcrumbList>
-                    <BreadcrumbItem>
-                      <BreadcrumbLink href="/">Beranda</BreadcrumbLink>
-                    </BreadcrumbItem>
-                    <BreadcrumbSeparator />
-                    <BreadcrumbItem>
-                      <BreadcrumbPage>{productCategoryLabels[homeCategory]}</BreadcrumbPage>
-                    </BreadcrumbItem>
-                  </BreadcrumbList>
-                </Breadcrumb>
               )}
-              <ProductCatalog
-                key={homeCategory}
-                initialCategory={homeCategory}
-                onCategoryChange={isCategoryMenu
-                  ? (category) => router.push(`/?category=${encodeURIComponent(category)}`)
-                  : undefined}
-                onSelectProduct={handleSelectProduct}
-              />
-            </div>
-
-            {/* Right Secondary Column: Quick Sidebar for Desktop */}
-            {!isCategoryMenu && <div className="hidden lg:col-span-4 lg:block space-y-5">
-              {/* Recent Transactions Widget */}
-              <div className="p-5 rounded-2xl bg-white border border-slate-200/80 shadow-sm">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2">
-                    <Receipt className="w-4 h-4 text-blue-600" />
-                    <h3 className="font-bold text-sm text-slate-900">Transaksi Terakhir</h3>
-                  </div>
-                  <button
-                    onClick={() => setActiveTab('history')}
-                    className="text-xs text-blue-600 hover:underline font-semibold"
-                  >
-                    Lihat Semua
-                  </button>
+              {!isCategoryMenu && (
+                <div className="mx-auto max-w-6xl">
+                  <StorefrontSections />
                 </div>
+              )}
 
-                {recentTransactions.length === 0 ? (
-                  <p className="text-xs text-slate-400 py-3 text-center">Belum ada transaksi</p>
-                ) : (
-                  <div className="divide-y divide-slate-100">
-                    {recentTransactions.map((trx) => (
-                      <button
-                        type="button"
-                        key={trx.id}
-                        onClick={() => handleSelectReceipt(trx)}
-                        aria-label={`Lihat detail transaksi ${trx.referenceId}`}
-                        className="flex w-full items-center justify-between gap-3 py-3 text-left text-xs transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-600"
-                      >
-                        <div>
-                          <div className="font-semibold text-slate-900 truncate max-w-[160px]">
-                            {trx.productName}
-                          </div>
-                          <div className="text-[11px] text-slate-400 font-mono">
-                            {trx.destination}
-                          </div>
-                        </div>
+              <div className="grid grid-cols-1 items-start gap-5">
+                <div className="mx-auto w-full max-w-6xl min-w-0 space-y-5">
+                  <section id="product-catalog" aria-label="Katalog produk" className="scroll-mt-36">
+                    <ProductCatalog
+                      key={`${homeCategory}:${catalogSearch}`}
+                      initialCategory={homeCategory}
+                      initialSearch={catalogSearch}
+                      onCategoryChange={isCategoryMenu
+                        ? (category) => router.push(`/?category=${encodeURIComponent(category)}`)
+                        : undefined}
+                      onSelectProduct={handleSelectProduct}
+                    />
+                  </section>
 
-                        <div className="text-right">
-                          <div className="font-bold text-slate-900 font-sans">
-                            Rp {trx.amount.toLocaleString('id-ID')}
-                          </div>
-                          <Badge
-                            variant={trx.status === 'success' ? 'success' : trx.status === 'pending' ? 'warning' : 'destructive'}
-                            className="text-[9px] font-bold"
-                          >
-                            {trx.status.toUpperCase()}
-                          </Badge>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
+                  {!isCategoryMenu && supportPhone && (
+                    <a
+                      href={`https://wa.me/${supportPhone.replace(/\D/g, '').replace(/^0/, '62')}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="liquid-surface flex w-fit max-w-full items-center justify-between gap-3 rounded-2xl border border-white/70 bg-white/55 p-4 text-xs text-slate-600 backdrop-blur-xl transition-colors hover:bg-white/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                    >
+                      <span className="flex min-w-0 items-center gap-2">
+                        <Headphones className="h-4 w-4 shrink-0 text-blue-600" aria-hidden="true" />
+                        <span className="min-w-0">
+                          <span className="block font-bold text-slate-900">Bantuan WhatsApp</span>
+                          <span className="block truncate text-[11px] text-slate-500">{supportPhone}</span>
+                        </span>
+                      </span>
+                    </a>
+                  )}
+                </div>
               </div>
-
-              {/* Help & Support Banner */}
-              {supportPhone && (
-              <a
-                href={`https://wa.me/${supportPhone.replace(/\D/g, '').replace(/^0/, '62')}`}
-                target="_blank"
-                rel="noreferrer"
-                className="p-4 rounded-2xl bg-slate-100 border border-slate-200/80 flex items-center justify-between text-xs text-slate-700 transition-colors hover:bg-slate-200/70"
-              >
-                <div className="flex items-center gap-2">
-                  <Headphones className="w-4 h-4 text-blue-600" />
-                  <div>
-                    <div className="font-bold text-slate-900">Bantuan melalui WhatsApp</div>
-                    <div className="text-[11px] text-slate-500">{supportPhone}</div>
-                  </div>
-                </div>
-              </a>
-              )}
-            </div>}
           </div>
-        )}
-      </main>
+        </main>
+
+        <StoreFooter
+          storeName={storeName}
+          tagline={storeTagline}
+          socialLinks={storeSocialLinks}
+        />
 
       {/* Direct Order Modal (Anonymous / Direct Payment or Wallet) */}
       <DirectOrderModal
@@ -354,12 +214,6 @@ export default function HomePage() {
       />
 
       {/* Digital Receipt Modal */}
-      {activeReceipt && (
-        <ReceiptModal
-          transaction={activeReceipt}
-          onClose={() => setActiveReceipt(null)}
-        />
-      )}
 
       {/* Deposit Modal */}
       <DepositModal
@@ -379,9 +233,21 @@ export default function HomePage() {
             : setIsDepositModalOpen(true)
         }
         onOpenAuth={() => setIsAuthModalOpen(true)}
+        onOpenHome={() => {
+          setActiveTab('home');
+          router.push('/');
+        }}
+        onOpenPromo={() => {
+          setActiveTab('promo');
+          router.push('/promo');
+        }}
         onOpenOrders={() => router.push('/cek-pesanan')}
-        onOpenLegal={() => router.push('/legal')}
+        onOpenAccount={() => router.push(
+          role === 'admin' ? '/admin' : role === 'agent' ? '/agent' : '/dashboard',
+        )}
+        className="lg:hidden"
       />
+      </div>
     </div>
   );
 }

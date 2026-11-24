@@ -1,7 +1,6 @@
-import { readFile } from 'node:fs/promises';
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuth } from '@/lib/server/auth';
-import { getImageMimeType, getUploadedImagePath } from '@/lib/server/uploaded-image';
+import { readUploadedImage } from '@/lib/server/uploaded-image';
 
 export const runtime = 'nodejs';
 
@@ -13,10 +12,11 @@ export async function GET(
   if (!session) return NextResponse.json({ error: 'UNAUTHORIZED' }, { status: 401 });
   const { assetId } = await context.params;
   try {
-    const bytes = await readFile(getUploadedImagePath('payment-methods', assetId));
-    return new NextResponse(bytes, {
+    const image = await readUploadedImage('payment-methods', assetId);
+    if (!image) return NextResponse.json({ error: 'IMAGE_NOT_FOUND' }, { status: 404 });
+    return new NextResponse(new Uint8Array(image.bytes), {
       headers: {
-        'Content-Type': getImageMimeType(assetId),
+        'Content-Type': image.mimeType,
         'Cache-Control': 'private, max-age=300',
         'X-Content-Type-Options': 'nosniff',
       },

@@ -53,10 +53,10 @@ export default function CookieConsent() {
       aria-modal="false"
       aria-labelledby="cookie-consent-title"
       aria-describedby="cookie-consent-description"
-      className="fixed inset-x-3 bottom-[calc(4.5rem+env(safe-area-inset-bottom)+0.75rem)] z-[90] mx-auto max-w-3xl rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_20px_60px_-20px_rgba(15,23,42,0.45)] sm:inset-x-6 sm:bottom-5 sm:p-5"
+      className="fixed inset-x-3 bottom-[calc(6.5rem+env(safe-area-inset-bottom))] z-[90] mx-auto max-w-3xl rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_20px_60px_-20px_rgba(15,23,42,0.45)] sm:inset-x-6 sm:bottom-[calc(7.75rem+env(safe-area-inset-bottom))] sm:p-5"
     >
       <div className="flex items-start gap-3">
-        <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
+        <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center text-blue-700">
           <Cookie className="h-5 w-5" aria-hidden="true" />
         </span>
         <div className="min-w-0 flex-1">

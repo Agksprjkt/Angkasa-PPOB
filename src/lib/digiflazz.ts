@@ -2,6 +2,8 @@ import 'server-only';
 
 import crypto from 'crypto';
 
+import { readDigiflazzTransactionResponse } from './digiflazz-protocol';
+
 export interface DigiflazzConfig {
   username: string;
   apiKey: string;
@@ -136,6 +138,11 @@ export async function createDigiflazzTransaction(
 ) {
   const result = await requestDigiflazzTransaction(config, params);
   if (result.httpStatus < 200 || result.httpStatus >= 300) {
+    // Digiflazz answers rejected transactions with HTTP 400 and a full transaction
+    // body (status "Gagal", rc 45 for unregistered IP, ...). Keep that body so the
+    // caller can classify a definitive failure instead of treating it as unclear.
+    const rejected = readDigiflazzTransactionResponse(result.data);
+    if (rejected) return result.data;
     throw new Error(`Digiflazz transaction request failed (${result.httpStatus})`);
   }
   return result.data;
@@ -180,6 +187,8 @@ async function requestDigiflazzTransaction(
     ref_id: params.refId,
     sign,
     testing: config.mode === 'sandbox' || params.testing === true,
+    // Required whenever customer_no contains the "<id>.<zone>" game separator.
+    ...(params.customerNo.includes('.') ? { allow_dot: true } : {}),
   };
 
   const response = await fetch('https://api.digiflazz.com/v1/transaction', {

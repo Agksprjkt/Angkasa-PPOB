@@ -1,0 +1,39 @@
+# Caddy reverse proxy for the PPOB app. Certificates come from Let's Encrypt
+# automatically, so DNS for PPOB_DOMAIN must already point at this host and ports
+# 80/443 must be reachable.
+#
+# The app listens on 127.0.0.1:3000 on the host, but Caddy reaches it by service
+# name over the Compose network, which keeps the app port unpublished.
+
+{
+	email {$PPOB_ACME_EMAIL}
+	servers {
+		protocols h1 h2
+	}
+}
+
+{$PPOB_DOMAIN} {
+	encode zstd gzip
+
+	# No HSTS header here: next.config.mjs already sets it, and two copies of the
+	# same header are invalid. Only strip the version banner.
+	header {
+		-Server
+	}
+
+	reverse_proxy app:3000 {
+		# Preserve the client address so Better Auth records a real IP. The app
+		# trusts these headers only through trustedProxies.
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Real-IP {remote_host}
+		health_uri /
+		health_interval 30s
+		health_timeout 5s
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

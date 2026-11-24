@@ -3,40 +3,25 @@ import 'server-only';
 import { randomUUID } from 'node:crypto';
 import { and, eq, lt } from 'drizzle-orm';
 import { createDigiflazzTransaction } from '@/lib/digiflazz';
-import { classifyQrislyPayment } from '@/lib/deposit-validation';
+import { classifyQrislyPayment, isWithinLateSettlementGrace, isValidQrislyAmount } from '@/lib/deposit-validation';
 import { getDatabase } from '@/lib/server/db/client';
 import { getDigiflazzConfig, getQrislyConfig } from '@/lib/server/integration-settings';
-import { checkQrislyPayment } from '@/lib/server/qrisly';
+import { checkQrislyPayment, createQrislyPayment } from '@/lib/server/qrisly';
 import { invoices, transactions } from '@/lib/server/db/schema';
 import { createOrderCode } from '@/lib/order-codes';
+import {
+  buildDigiflazzCustomerNo,
+  mapDigiflazzStatus,
+  readDigiflazzTransactionResponse,
+} from '@/lib/digiflazz-protocol';
+import {
+  expireFlashSaleReservationForInvoice,
+  settleFlashSaleReservation,
+} from '@/lib/server/flash-sales';
 
-function isProviderResponse(
-  value: unknown,
-): value is {
-  data: {
-    ref_id: string;
-    status: string;
-    message: string;
-    rc: string;
-    sn?: string;
-  };
-} {
-  if (typeof value !== 'object' || value === null || !('data' in value)) return false;
-  const data = value.data;
-  return (
-    typeof data === 'object' &&
-    data !== null &&
-    'ref_id' in data &&
-    typeof data.ref_id === 'string' &&
-    'status' in data &&
-    typeof data.status === 'string' &&
-    'message' in data &&
-    typeof data.message === 'string' &&
-    'rc' in data &&
-    typeof data.rc === 'string' &&
-    (!('sn' in data) || typeof data.sn === 'string')
-  );
-}
+// QRIS can settle shortly after our local expiry. Keep polling the provider
+// through this grace window so a late-but-real payment is never marked expired.
+const lateSettlementGraceMs = 60 * 60_000;
 
 async function submitPaidOrder(
   invoice: typeof invoices.$inferSelect,
@@ -57,23 +42,19 @@ async function submitPaidOrder(
       { username: config.username, apiKey: config.apiKey, mode: config.mode },
       {
         buyerSkuCode: invoice.vendorCode,
-        customerNo: invoice.serverZoneId
-          ? `${invoice.destination}.${invoice.serverZoneId}`
-          : invoice.destination,
+        customerNo: buildDigiflazzCustomerNo(
+          invoice.destination,
+          invoice.serverZoneId,
+        ).customerNo,
         refId: transaction.referenceId,
       },
     );
-    if (!isProviderResponse(response) || response.data.ref_id !== transaction.referenceId) {
+    const provider = readDigiflazzTransactionResponse(response);
+    if (!provider || provider.refId !== transaction.referenceId) {
       throw new Error('DIGIFLAZZ_RESPONSE_UNCLEAR');
     }
 
-    const provider = response.data;
-    const providerStatus = provider.status.toLowerCase();
-    const status = providerStatus === 'sukses' && provider.rc === '00'
-      ? 'success'
-      : providerStatus === 'gagal'
-        ? 'failed'
-        : 'pending';
+    const status = mapDigiflazzStatus(provider.status, provider.rc);
     const vendorResponse = {
       code: provider.rc.slice(0, 100),
       message: provider.message.slice(0, 500),
@@ -99,6 +80,9 @@ async function submitPaidOrder(
       .set({
         transactionStatus: status === 'pending' ? 'processing' : status,
         sn: status === 'success' ? provider.sn ?? null : null,
+        // The customer already paid at the gateway, so a definitive vendor failure
+        // needs a manual refund; flag the invoice like the webhook path does.
+        ...(status === 'failed' ? { paymentStatus: 'review' as const } : {}),
         updatedAt: new Date(),
       })
       .where(eq(invoices.id, invoice.id))
@@ -183,6 +167,28 @@ export async function refreshQrislyOrder(invoiceId: string) {
 
   if (invoice.paymentStatus === 'unpaid') {
     if (!invoice.providerReference) {
+      if (invoice.expiresAt <= new Date()) {
+        const now = new Date();
+        const [expiredInvoice] = await db.transaction(async (tx) => {
+          const [updated] = await tx
+            .update(invoices)
+            .set({ paymentStatus: 'expired', updatedAt: now })
+            .where(and(
+              eq(invoices.id, invoice!.id),
+              eq(invoices.paymentStatus, 'unpaid'),
+            ))
+            .returning();
+          if (updated) {
+            await expireFlashSaleReservationForInvoice(tx, updated.id, now);
+          }
+          return [updated];
+        });
+        return {
+          invoice: expiredInvoice ?? invoice,
+          transaction,
+          paymentCheckError: null,
+        };
+      }
       return { invoice, transaction, paymentCheckError: 'PAYMENT_INITIALIZING' };
     }
 
@@ -195,7 +201,7 @@ export async function refreshQrislyOrder(invoiceId: string) {
     const paymentResult = classifyQrislyPayment(
       payment.status,
       payment.amount,
-      invoice.totalPay,
+      invoice.payableAmount ?? invoice.totalPay,
     );
 
     if (paymentResult === 'pending' && invoice.expiresAt > new Date()) {
@@ -210,39 +216,66 @@ export async function refreshQrislyOrder(invoiceId: string) {
       return { invoice: checkedInvoice ?? invoice, transaction, paymentCheckError: null };
     }
 
+    // Past the local deadline but the provider has not failed it: a QRIS scan can
+    // still settle. Keep the invoice unpaid through a short grace window, then expire.
+    if (paymentResult === 'pending') {
+      if (isWithinLateSettlementGrace(invoice.expiresAt, new Date(), lateSettlementGraceMs)) {
+        return {
+          invoice,
+          transaction,
+          paymentCheckError: 'PAYMENT_AWAITING_PROVIDER',
+        };
+      }
+    }
+
     if (paymentResult === 'amount_mismatch') {
       console.error(
         '[QRISLY_ORDER_AMOUNT_MISMATCH]',
         invoice.id,
         Number.isSafeInteger(payment.amount) ? payment.amount : 'invalid amount',
-        invoice.totalPay,
+        invoice.payableAmount ?? invoice.totalPay,
       );
-      const [updated] = await db
-        .update(invoices)
-        .set({ paymentStatus: 'review', updatedAt: new Date() })
-        .where(and(eq(invoices.id, invoice.id), eq(invoices.paymentStatus, 'unpaid')))
-        .returning();
+      const now = new Date();
+      const [updated] = await db.transaction(async (tx) => {
+        const [reviewInvoice] = await tx
+          .update(invoices)
+          .set({ paymentStatus: 'review', updatedAt: now })
+          .where(and(eq(invoices.id, invoice!.id), eq(invoices.paymentStatus, 'unpaid')))
+          .returning();
+        if (reviewInvoice) {
+          await expireFlashSaleReservationForInvoice(tx, reviewInvoice.id, now);
+        }
+        return [reviewInvoice];
+      });
       invoice = updated ?? invoice;
       return { invoice, transaction, paymentCheckError: 'PAYMENT_AMOUNT_MISMATCH' };
     }
 
     if (paymentResult === 'failed' || paymentResult === 'pending') {
-      const [updated] = await db
-        .update(invoices)
-        .set({ paymentStatus: 'expired', updatedAt: new Date() })
-        .where(and(eq(invoices.id, invoice.id), eq(invoices.paymentStatus, 'unpaid')))
-        .returning();
+      const now = new Date();
+      const [updated] = await db.transaction(async (tx) => {
+        const [expiredInvoice] = await tx
+          .update(invoices)
+          .set({ paymentStatus: 'expired', updatedAt: now })
+          .where(and(eq(invoices.id, invoice!.id), eq(invoices.paymentStatus, 'unpaid')))
+          .returning();
+        if (expiredInvoice) {
+          await expireFlashSaleReservationForInvoice(tx, expiredInvoice.id, now);
+        }
+        return [expiredInvoice];
+      });
       invoice = updated ?? invoice;
       return { invoice, transaction, paymentCheckError: null };
     }
 
+    const now = new Date();
     const claimed = await db.transaction(async (tx) => {
       const [updatedInvoice] = await tx
         .update(invoices)
         .set({
           paymentStatus: 'paid',
           transactionStatus: 'processing',
-          updatedAt: new Date(),
+          updatedAt: now,
         })
         .where(and(
           eq(invoices.id, invoice.id),
@@ -276,6 +309,12 @@ export async function refreshQrislyOrder(invoiceId: string) {
         })
         .returning();
       if (!createdTransaction) throw new Error('PAID_ORDER_TRANSACTION_CREATE_FAILED');
+      await settleFlashSaleReservation(
+        tx,
+        { invoiceId: invoice.id },
+        'consumed',
+        now,
+      );
       return { invoice: updatedInvoice, transaction: createdTransaction };
     });
 
@@ -299,4 +338,120 @@ export async function refreshQrislyOrder(invoiceId: string) {
   }
 
   return { invoice, transaction, paymentCheckError: null };
+}
+
+// Buyer-initiated cancel. Compare-and-set on `unpaid` so a QRIS that settles at
+// the same moment is never overwritten into `expired`.
+export async function cancelQrislyInvoice(invoiceId: string) {
+  const db = getDatabase();
+  const now = new Date();
+  const cancelled = await db.transaction(async (tx) => {
+    const [updated] = await tx
+      .update(invoices)
+      .set({ paymentStatus: 'expired', updatedAt: now })
+      .where(and(
+        eq(invoices.id, invoiceId),
+        eq(invoices.paymentStatus, 'unpaid'),
+        eq(invoices.transactionStatus, 'pending'),
+      ))
+      .returning();
+    if (!updated) return null;
+    await expireFlashSaleReservationForInvoice(tx, updated.id, now);
+    return updated;
+  });
+  if (cancelled) return cancelled;
+
+  // Already settled or already cancelled: report the current row so the caller
+  // can tell "not cancellable" from "not found".
+  return db
+    .select()
+    .from(invoices)
+    .where(eq(invoices.id, invoiceId))
+    .limit(1)
+    .then((rows) => rows[0] ?? null);
+}
+
+// "Ganti metode bayar": retire the unpaid invoice and issue a fresh QRIS for the
+// exact same order. Amount and product are copied so the buyer is not repriced.
+export async function renewQrislyInvoice(invoice: typeof invoices.$inferSelect) {
+  const config = await getQrislyConfig();
+  if (!config.enabled || !config.apiKey || !config.qrisId) {
+    throw new Error('QRISLY_NOT_CONFIGURED');
+  }
+  if (!isValidQrislyAmount(invoice.totalPay)) {
+    throw new Error('QRISLY_AMOUNT_OUT_OF_RANGE');
+  }
+
+  const db = getDatabase();
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 15 * 60_000);
+  const id = randomUUID();
+  const invoiceNumber = createOrderCode('INV');
+
+  const created = await db.transaction(async (tx) => {
+    const [retired] = await tx
+      .update(invoices)
+      .set({ paymentStatus: 'expired', updatedAt: now })
+      .where(and(
+        eq(invoices.id, invoice.id),
+        eq(invoices.paymentStatus, 'unpaid'),
+        eq(invoices.transactionStatus, 'pending'),
+      ))
+      .returning();
+    if (!retired) return null;
+    await expireFlashSaleReservationForInvoice(tx, retired.id, now);
+
+    const [inserted] = await tx
+      .insert(invoices)
+      .values({
+        id,
+        invoiceNumber,
+        userId: retired.userId,
+        customerPhone: retired.customerPhone,
+        purchaserName: retired.purchaserName,
+        customerEmail: retired.customerEmail,
+        productId: retired.productId,
+        vendorCode: retired.vendorCode,
+        productName: retired.productName,
+        category: retired.category,
+        operator: retired.operator,
+        destination: retired.destination,
+        serverZoneId: retired.serverZoneId,
+        customerName: retired.customerName,
+        productPrice: retired.productPrice,
+        basePrice: retired.basePrice,
+        adminFee: retired.adminFee,
+        totalPay: retired.totalPay,
+        paymentMethod: 'qrisly',
+        paymentStatus: 'unpaid',
+        transactionStatus: 'pending',
+        guestAccessTokenHash: retired.guestAccessTokenHash,
+        idempotencyKey: `qrisly-order:renew:${retired.id}:${id}`,
+        expiresAt,
+      })
+      .returning();
+    return inserted ?? null;
+  });
+
+  if (!created) return null;
+
+  const payment = await createQrislyPayment(
+    { apiKey: config.apiKey, qrisId: config.qrisId, mode: config.mode },
+    created.totalPay,
+  );
+  if (payment.payableAmount === null) {
+    throw new Error('QRISLY_PAYABLE_AMOUNT_INVALID');
+  }
+  const [updated] = await db
+    .update(invoices)
+    .set({
+      providerReference: payment.historyId,
+      qrString: payment.qrString,
+      payableAmount: payment.payableAmount,
+      expiresAt: payment.expiresAt && payment.expiresAt > now ? payment.expiresAt : expiresAt,
+      updatedAt: new Date(),
+    })
+    .where(eq(invoices.id, created.id))
+    .returning();
+  return updated ?? created;
 }

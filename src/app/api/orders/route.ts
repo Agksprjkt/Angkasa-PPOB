@@ -46,6 +46,16 @@ export async function POST(request: NextRequest) {
   }
 
   const productId = typeof payload.productId === 'string' ? payload.productId : '';
+  const flashSaleOfferId =
+    typeof payload.flashSaleOfferId === 'string' ? payload.flashSaleOfferId : undefined;
+  const flashSalePriceExpected = payload.flashSalePriceExpected;
+  if (
+    ('flashSaleOfferId' in payload && typeof payload.flashSaleOfferId !== 'string') ||
+    ('flashSalePriceExpected' in payload &&
+      !Number.isSafeInteger(payload.flashSalePriceExpected))
+  ) {
+    return NextResponse.json({ error: 'INVALID_FLASH_SALE' }, { status: 400 });
+  }
   const destination =
     typeof payload.destination === 'string' ? payload.destination.trim() : '';
   const customerName =
@@ -59,6 +69,11 @@ export async function POST(request: NextRequest) {
   if ('serverZoneId' in payload && typeof payload.serverZoneId !== 'string') {
     return NextResponse.json({ error: 'INVALID_GAME_SERVER_ID' }, { status: 400 });
   }
+  if ('transactionPin' in payload && typeof payload.transactionPin !== 'string') {
+    return NextResponse.json({ error: 'INVALID_TRANSACTION_PIN' }, { status: 400 });
+  }
+  const transactionPin =
+    typeof payload.transactionPin === 'string' ? payload.transactionPin : undefined;
 
   if (
     !productId ||
@@ -88,6 +103,10 @@ export async function POST(request: NextRequest) {
     destination,
     customerName,
     serverZoneId,
+    transactionPin,
+    flashSaleOfferId,
+    flashSalePriceExpected:
+      typeof flashSalePriceExpected === 'number' ? flashSalePriceExpected : undefined,
     user: {
       id: session.user.id,
       phoneNumber: session.user.phoneNumber,
@@ -95,5 +114,17 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  return NextResponse.json(result.body, { status: result.status });
+  // Store margin is internal; strip the profit column before responding.
+  const body = result.body.transaction
+    ? {
+      ...result.body,
+      transaction: (() => {
+        const { profit, ...transaction } = result.body.transaction;
+        void profit;
+        return transaction;
+      })(),
+    }
+    : result.body;
+
+  return NextResponse.json(body, { status: result.status });
 }

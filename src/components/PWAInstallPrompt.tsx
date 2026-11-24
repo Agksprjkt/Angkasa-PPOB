@@ -19,7 +19,7 @@ export default function PWAInstallPrompt({ deferredPrompt, onInstall }: PWAInsta
   return (
     <div className="fixed bottom-20 md:bottom-6 left-4 right-4 md:left-auto md:right-6 md:max-w-md z-40 animate-slideUp">
       <div className="p-4 rounded-2xl bg-slate-900 border border-slate-700 text-white shadow-2xl flex items-start gap-3">
-        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 to-emerald-600 flex items-center justify-center flex-shrink-0 text-white shadow-md">
+        <div className="install-badge w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 to-emerald-600 flex items-center justify-center flex-shrink-0 text-white shadow-md">
           <Smartphone className="w-5 h-5" />
         </div>
 

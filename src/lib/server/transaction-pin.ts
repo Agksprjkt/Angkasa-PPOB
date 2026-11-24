@@ -18,41 +18,44 @@ export async function verifyAndRecordTransactionPin(
   userId: string,
   pin: string,
 ): Promise<TransactionPinVerification> {
-  return getDatabase().transaction(async (tx) => {
-    const savedPin = await tx
-      .select()
-      .from(transactionPins)
-      .where(eq(transactionPins.userId, userId))
-      .limit(1)
-      .then((rows) => rows[0]);
+  const db = getDatabase();
+  const savedPin = await db
+    .select()
+    .from(transactionPins)
+    .where(eq(transactionPins.userId, userId))
+    .limit(1)
+    .then((rows) => rows[0]);
 
-    if (!savedPin) return 'not_set';
+  if (!savedPin) return 'not_set';
 
-    const now = new Date();
-    if (savedPin.lockedUntil && savedPin.lockedUntil > now) return 'locked';
+  const now = new Date();
+  if (savedPin.lockedUntil && savedPin.lockedUntil > now) return 'locked';
 
-    const attempts = savedPin.lockedUntil ? 0 : savedPin.failedAttempts;
-    if (await verifyTransactionPin(pin, savedPin.pinHash)) {
-      await tx
-        .update(transactionPins)
-        .set({ failedAttempts: 0, lockedUntil: null, updatedAt: now })
-        .where(eq(transactionPins.userId, userId));
-      return 'valid';
-    }
+  // scrypt is CPU-bound and takes ~100ms. Verifying it inside a write
+  // transaction held the SQLite lock for that whole window, so any concurrent
+  // request failed with SQLITE_BUSY. Verify first, then take the lock briefly.
+  const valid = await verifyTransactionPin(pin, savedPin.pinHash);
 
-    const failedAttempts = attempts + 1;
-    await tx
+  if (valid) {
+    await db
       .update(transactionPins)
-      .set({
-        failedAttempts,
-        lockedUntil:
-          failedAttempts >= MAX_FAILED_ATTEMPTS
-            ? new Date(now.getTime() + LOCK_DURATION_MS)
-            : null,
-        updatedAt: now,
-      })
+      .set({ failedAttempts: 0, lockedUntil: null, updatedAt: now })
       .where(eq(transactionPins.userId, userId));
+    return 'valid';
+  }
 
-    return failedAttempts >= MAX_FAILED_ATTEMPTS ? 'locked' : 'invalid';
-  });
+  const attempts = (savedPin.lockedUntil ? 0 : savedPin.failedAttempts) + 1;
+  await db
+    .update(transactionPins)
+    .set({
+      failedAttempts: attempts,
+      lockedUntil:
+        attempts >= MAX_FAILED_ATTEMPTS
+          ? new Date(now.getTime() + LOCK_DURATION_MS)
+          : null,
+      updatedAt: now,
+    })
+    .where(eq(transactionPins.userId, userId));
+
+  return attempts >= MAX_FAILED_ATTEMPTS ? 'locked' : 'invalid';
 }

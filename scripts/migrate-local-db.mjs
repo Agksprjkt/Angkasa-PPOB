@@ -8,8 +8,23 @@ import { drizzle as drizzleLibSql } from 'drizzle-orm/libsql';
 import { migrate as migrateLibSql } from 'drizzle-orm/libsql/migrator';
 import { drizzle as drizzlePostgres } from 'drizzle-orm/postgres-js';
 import { migrate as migratePostgres } from 'drizzle-orm/postgres-js/migrator';
+import { parseSystemConfig, resolveDatabaseUrls } from '../src/lib/system-config-core.ts';
 
 nextEnv.loadEnvConfig(process.cwd());
+
+// The connection fields used here are never encrypted, so the script reads the
+// config file directly instead of importing the server-only store.
+function readSystemConfig() {
+  const file = resolve(
+    process.cwd(),
+    process.env.SYSTEM_CONFIG_FILE || '.data/system-config.json',
+  );
+  try {
+    return parseSystemConfig(JSON.parse(readFileSync(file, 'utf8')));
+  } catch {
+    return parseSystemConfig({});
+  }
+}
 
 function getDatabaseMode() {
   const modeFile = process.env.DATABASE_MODE_FILE ||
@@ -19,7 +34,7 @@ function getDatabaseMode() {
     contents = readFileSync(modeFile, 'utf8');
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
-      const mode = process.env.DATABASE_PROVIDER ?? 'sqlite';
+      const mode = process.env.DATABASE_PROVIDER ?? readSystemConfig().database.provider;
       if (mode === 'sqlite' || mode === 'postgres') return mode;
       throw new Error('DATABASE_PROVIDER must be "sqlite" or "postgres"');
     }
@@ -43,10 +58,7 @@ function getDatabaseMode() {
   return value.mode;
 }
 
-function getPostgresUrl() {
-  const url = process.env.DATABASE_URL_FILE
-    ? readFileSync(process.env.DATABASE_URL_FILE, 'utf8').trim()
-    : process.env.DATABASE_URL;
+function assertUrl(url) {
   if (!url) throw new Error('Set DATABASE_URL or DATABASE_URL_FILE for PostgreSQL');
   const parsedUrl = new URL(url);
   if (parsedUrl.protocol !== 'postgres:' && parsedUrl.protocol !== 'postgresql:') {
@@ -55,11 +67,27 @@ function getPostgresUrl() {
   return url;
 }
 
+// Migrations always target the direct URL; a pooled PgBouncer endpoint cannot
+// run the advisory locks Drizzle migrations take.
+function getPostgresUrl() {
+  if (process.env.DATABASE_URL_FILE) {
+    return assertUrl(readFileSync(process.env.DATABASE_URL_FILE, 'utf8').trim());
+  }
+  if (process.env.DATABASE_URL_DIRECT_FILE) {
+    return assertUrl(readFileSync(process.env.DATABASE_URL_DIRECT_FILE, 'utf8').trim());
+  }
+  const resolved = resolveDatabaseUrls(readSystemConfig().database);
+  return assertUrl(process.env.DATABASE_URL_DIRECT?.trim() || resolved.urlDirect);
+}
+
 if (getDatabaseMode() === 'postgres') {
-  const client = postgres(getPostgresUrl(), {
+  const url = getPostgresUrl();
+  const client = postgres(url, {
     max: 1,
     connect_timeout: 10,
     idle_timeout: 10,
+    prepare: false,
+    ssl: new URL(url).searchParams.get('sslmode') === 'require' ? 'require' : false,
   });
   try {
     await migratePostgres(drizzlePostgres(client), {

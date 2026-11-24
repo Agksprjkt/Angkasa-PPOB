@@ -8,6 +8,8 @@ import {
   isDigiflazzProductSyncDue,
 } from '@/lib/digiflazz-product-sync-schedule';
 import { fetchDigiflazzPriceList } from '@/lib/digiflazz';
+import { parseDigiflazzPrice } from '@/lib/digiflazz-protocol';
+import { resolveVariant } from '@/lib/product-variant';
 import { getDatabase } from '@/lib/server/db/client';
 import {
   productProviderSettings,
@@ -86,6 +88,8 @@ export async function syncDigiflazzProducts(): Promise<DigiflazzAutoSyncResult> 
     name: string;
     category: ProductCategory;
     operator: string;
+    variant: string | null;
+    variantSource: 'manual' | 'sync';
     description: string;
     basePrice: number;
     sellPriceUser: number;
@@ -106,13 +110,13 @@ export async function syncDigiflazzProducts(): Promise<DigiflazzAutoSyncResult> 
     const vendorCode = source.buyer_sku_code;
     const name = source.product_name;
     const operator = source.brand;
-    const basePrice = source.price;
+    const basePrice = parseDigiflazzPrice(source.price);
     const category = getCategory(source.category);
     if (
       typeof vendorCode !== 'string' || !vendorCode.trim() || vendorCode.length > 100 ||
       typeof name !== 'string' || !name.trim() || name.length > 200 ||
       typeof operator !== 'string' || !operator.trim() || operator.length > 200 ||
-      typeof basePrice !== 'number' || !Number.isSafeInteger(basePrice) || basePrice < 0 ||
+      basePrice === null ||
       !category
     ) {
       skipped += 1;
@@ -133,6 +137,14 @@ export async function syncDigiflazzProducts(): Promise<DigiflazzAutoSyncResult> 
       existing,
       pricing,
     );
+    // A manual variant set by an admin must survive every future sync.
+    const resolvedVariant = existing?.variantSource === 'manual'
+      ? { variant: existing.variant, source: 'type' as const }
+      : resolveVariant({
+        type: typeof source.type === 'string' ? source.type : null,
+        productName: name,
+        category,
+      });
     const productStatus = isProviderUnavailable(source.buyer_product_status) ||
       isProviderUnavailable(source.seller_product_status)
       ? 'inactive'
@@ -145,6 +157,8 @@ export async function syncDigiflazzProducts(): Promise<DigiflazzAutoSyncResult> 
       name: name.trim(),
       category,
       operator: normalizedOperator,
+      variant: resolvedVariant.variant,
+      variantSource: existing?.variantSource === 'manual' ? 'manual' : 'sync',
       description,
       basePrice,
       ...sellPrices,

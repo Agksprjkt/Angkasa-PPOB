@@ -2,7 +2,7 @@ import { desc, eq, sql } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuth } from '@/lib/server/auth';
 import { getDatabase } from '@/lib/server/db/client';
-import { balanceLedger, users } from '@/lib/server/db/schema';
+import { balanceLedger, deposits, transactions, users } from '@/lib/server/db/schema';
 import { applyBalanceDelta } from '@/lib/server/wallet';
 import type { UserRole } from '@/types/ppob';
 
@@ -203,4 +203,52 @@ export async function PATCH(request: NextRequest) {
   }
 
   return NextResponse.json({ error: 'INVALID_USER_UPDATE_ACTION' }, { status: 400 });
+}
+
+export async function DELETE(request: NextRequest) {
+  const session = await getAuth().api.getSession({ headers: request.headers });
+  if (!session || session.user.role !== 'admin') {
+    return NextResponse.json({ error: 'FORBIDDEN' }, { status: 403 });
+  }
+
+  const id = request.nextUrl.searchParams.get('id');
+  if (!id) {
+    return NextResponse.json({ error: 'USER_ID_REQUIRED' }, { status: 400 });
+  }
+  if (id === session.user.id) {
+    return NextResponse.json({ error: 'CANNOT_DELETE_SELF' }, { status: 409 });
+  }
+
+  try {
+    const db = getDatabase();
+    const [transactionCount] = await db
+      .select({ total: sql<number>`count(*)` })
+      .from(transactions)
+      .where(eq(transactions.userId, id));
+    const [depositCount] = await db
+      .select({ total: sql<number>`count(*)` })
+      .from(deposits)
+      .where(eq(deposits.userId, id));
+    if (Number(transactionCount?.total ?? 0) > 0 || Number(depositCount?.total ?? 0) > 0) {
+      return NextResponse.json(
+        { error: 'USER_HAS_HISTORY', transactions: Number(transactionCount?.total ?? 0), deposits: Number(depositCount?.total ?? 0) },
+        { status: 409 },
+      );
+    }
+
+    const [removed] = await db
+      .delete(users)
+      .where(eq(users.id, id))
+      .returning({ id: users.id });
+    if (!removed) {
+      return NextResponse.json({ error: 'USER_NOT_FOUND' }, { status: 404 });
+    }
+    return NextResponse.json({ id: removed.id });
+  } catch (error) {
+    console.error(
+      '[ADMIN_USER_DELETE_FAILED]',
+      error instanceof Error ? error.message : 'Unknown database error',
+    );
+    return NextResponse.json({ error: 'USER_DELETE_FAILED' }, { status: 503 });
+  }
 }

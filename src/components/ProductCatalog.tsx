@@ -2,12 +2,14 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { usePPOB } from '@/context/PPOBContext';
 import { CatalogProduct, Product, ProductCategory } from '@/types/ppob';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Skeleton } from '@/components/ui/skeleton';
 import { gameRequiresServerZone } from '@/lib/order-input-validation';
 import {
   Smartphone,
@@ -21,11 +23,13 @@ import {
   Sparkles,
   HelpCircle,
   ChevronRight,
+  LayoutGrid,
 } from 'lucide-react';
 
 interface ProductCatalogProps {
   view?: 'browse' | 'provider';
   initialCategory?: ProductCategory;
+  initialSearch?: string;
   initialOperator?: string;
   onCategoryChange?: (category: ProductCategory) => void;
   onSelectProduct: (
@@ -68,32 +72,32 @@ const categoryOrder: ProductCategory[] = [
 
 const categoryStyles: Record<ProductCategory, { active: string; icon: string }> = {
   pulsa: {
-    active: 'border-indigo-100 bg-indigo-50 text-indigo-700',
-    icon: 'bg-blue-100 text-blue-600',
+    active: 'border-sky-100 bg-sky-50 text-sky-700',
+    icon: 'text-blue-600',
   },
   data: {
     active: 'border-cyan-100 bg-cyan-50 text-cyan-700',
-    icon: 'bg-cyan-100 text-cyan-600',
+    icon: 'text-cyan-600',
   },
   voucher: {
-    active: 'border-violet-100 bg-violet-50 text-violet-700',
-    icon: 'bg-violet-100 text-violet-600',
+    active: 'border-sky-100 bg-sky-50 text-sky-700',
+    icon: 'text-sky-600',
   },
   ewallet: {
     active: 'border-emerald-100 bg-emerald-50 text-emerald-700',
-    icon: 'bg-emerald-100 text-emerald-600',
+    icon: 'text-emerald-600',
   },
   game: {
     active: 'border-blue-100 bg-blue-50 text-blue-700',
-    icon: 'bg-blue-100 text-blue-600',
+    icon: 'text-blue-600',
   },
   pln: {
     active: 'border-amber-100 bg-amber-50 text-amber-700',
-    icon: 'bg-amber-100 text-amber-600',
+    icon: 'text-amber-600',
   },
   tagihan: {
     active: 'border-rose-100 bg-rose-50 text-rose-700',
-    icon: 'bg-rose-100 text-rose-600',
+    icon: 'text-rose-600',
   },
 };
 
@@ -109,11 +113,12 @@ function getGameProductGroup(product: Pick<Product, 'name' | 'description'>) {
 export default function ProductCatalog({
   view = 'browse',
   initialCategory = 'pulsa',
+  initialSearch = '',
   initialOperator,
   onCategoryChange,
   onSelectProduct,
 }: ProductCatalogProps) {
-  const { products, role } = usePPOB();
+  const { products, role, catalogPending } = usePPOB();
   const router = useRouter();
 
   const [activeCategory, setActiveCategory] = useState<ProductCategory>(initialCategory);
@@ -137,8 +142,9 @@ export default function ProductCatalog({
 
   // Tagihan is unavailable until a real provider inquiry is connected.
   const [selectedBillType, setSelectedBillType] = useState(initialOperator ?? 'All');
-  const [productSearch, setProductSearch] = useState('');
+  const [productSearch, setProductSearch] = useState(initialSearch);
   const [selectedGameProductGroup, setSelectedGameProductGroup] = useState('Semua');
+  const [selectedVariant, setSelectedVariant] = useState('Semua');
 
   // Auto-detect Telco Operator from Phone Prefix
   const detectedOperatorFromNumber = useMemo(() => {
@@ -251,6 +257,35 @@ export default function ProductCatalog({
     [products],
   );
 
+  // Product types ("Combo Lite", "FlexMax", …) come from the Digiflazz price
+  // list or an admin override. Only offered when the provider actually has them.
+  const variantOptions = useMemo(() => {
+    const operator = activeProvider ?? (
+      activeCategory === 'ewallet' ? selectedEwallet
+        : activeCategory === 'game' ? selectedGame
+          : activeCategory === 'tagihan' ? selectedBillType
+            : null
+    );
+    const scoped = products.filter((product) =>
+      product.status === 'active' &&
+      product.category === activeCategory &&
+      (!operator || operator === 'All' ||
+        product.operator.toLowerCase() === operator.toLowerCase()),
+    );
+    return [...new Set(
+      scoped
+        .map((product) => product.variant?.trim())
+        .filter((variant): variant is string => Boolean(variant)),
+    )].sort((a, b) => a.localeCompare(b, 'id'));
+  }, [
+    products,
+    activeCategory,
+    activeProvider,
+    selectedEwallet,
+    selectedGame,
+    selectedBillType,
+  ]);
+
   // Filtered Products
   const filteredProducts = useMemo(() => {
     return products.filter((p) => {
@@ -292,6 +327,10 @@ export default function ProductCatalog({
         if (getGameProductGroup(p) !== selectedGameProductGroup) return false;
       }
 
+      if (selectedVariant !== 'Semua') {
+        if ((p.variant ?? '').toLowerCase() !== selectedVariant.toLowerCase()) return false;
+      }
+
       return true;
     });
   }, [
@@ -304,6 +343,7 @@ export default function ProductCatalog({
     selectedBillType,
     productSearch,
     selectedGameProductGroup,
+    selectedVariant,
     view,
   ]);
 
@@ -354,8 +394,8 @@ export default function ProductCatalog({
   if (view === 'browse') {
     return (
       <Card className="overflow-hidden border-slate-200/80 shadow-sm">
-        <div className="border-b border-slate-100 bg-white p-3 sm:p-4">
-          <div className="grid grid-cols-4 gap-2 text-center sm:grid-cols-7">
+        <div className="border-b border-slate-200 bg-slate-50 p-3 sm:p-4">
+          <div className="grid grid-cols-4 gap-2 text-center sm:grid-cols-4 lg:grid-cols-8">
             {categoryOrder.map((category) => {
               const Icon = categoryIcons[category];
               const isActive = activeCategory === category;
@@ -365,6 +405,7 @@ export default function ProductCatalog({
                   type="button"
                   onClick={() => {
                     setActiveCategory(category);
+                    setSelectedVariant('Semua');
                     onCategoryChange?.(category);
                   }}
                   aria-pressed={isActive}
@@ -374,23 +415,29 @@ export default function ProductCatalog({
                       : 'border-transparent bg-slate-50 text-slate-600 hover:bg-slate-100'
                   }`}
                 >
-                  <span className={`flex h-8 w-8 items-center justify-center rounded-xl ${categoryStyles[category].icon}`}>
-                    <Icon className="h-4 w-4" />
+                  <span className={`flex h-8 w-8 items-center justify-center ${categoryStyles[category].icon}`}>
+                    <Icon className="h-5 w-5" />
                   </span>
-                  <span>{categoryLabels[category] === 'Paket Data' ? 'Paket Data' : categoryLabels[category]}</span>
+                  <span>{categoryLabels[category]}</span>
                 </button>
               );
             })}
+            <Link
+              href="/produk"
+              className="flex min-h-[68px] flex-col items-center justify-center gap-1.5 rounded-2xl border border-dashed border-slate-300 bg-white px-1.5 py-2 text-xs font-semibold text-slate-600 transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
+            >
+              <span className="flex h-8 w-8 items-center justify-center text-blue-600">
+                <LayoutGrid className="h-5 w-5" aria-hidden="true" />
+              </span>
+              <span>Produk lainnya</span>
+            </Link>
           </div>
         </div>
 
         <CardContent className="p-4 sm:p-6">
           <div className="mb-4 flex items-end justify-between gap-3">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-violet-700">
-                Katalog PPOB
-              </p>
-              <h2 className="mt-1 text-lg font-bold text-slate-900">
+              <h2 className="text-lg font-bold text-slate-900">
                 {activeCategory === 'game'
                   ? 'Pilih Game'
                   : activeCategory === 'pulsa'
@@ -406,7 +453,23 @@ export default function ProductCatalog({
             </span>
           </div>
 
-          {providerCards.length === 0 ? (
+          {catalogPending ? (
+            <div className={`grid grid-cols-2 gap-3 ${
+              activeCategory === 'game'
+                ? 'sm:grid-cols-4 lg:grid-cols-6'
+                : 'sm:grid-cols-3 lg:grid-cols-4'
+            }`}>
+              {Array.from({ length: 8 }).map((_, index) => (
+                <div
+                  key={index}
+                  className="flex min-h-[5.5rem] flex-col items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white/60 p-3"
+                >
+                  <Skeleton className="h-10 w-10 rounded-xl" />
+                  <Skeleton className="h-3 w-4/5" />
+                </div>
+              ))}
+            </div>
+          ) : providerCards.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-5 py-12 text-center">
               <HelpCircle className="mx-auto mb-2 h-8 w-8 text-slate-400" />
               <p className="text-sm font-semibold text-slate-700">Layanan belum tersedia</p>
@@ -415,7 +478,11 @@ export default function ProductCatalog({
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            <div className={`grid grid-cols-2 gap-3 ${
+              activeCategory === 'game'
+                ? 'sm:grid-cols-4 lg:grid-cols-6'
+                : 'sm:grid-cols-3 lg:grid-cols-4'
+            }`}>
               {providerCards.map(({ operator, product, count }) => {
                 const Icon = categoryIcons[activeCategory];
                 const image = product.providerCoverUrl || product.providerIconUrl;
@@ -428,9 +495,11 @@ export default function ProductCatalog({
                         `/checkout/${encodeURIComponent(activeCategory)}/${encodeURIComponent(operator)}`,
                       );
                     }}
-                    className="group min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white text-left shadow-sm transition hover:-translate-y-0.5 hover:border-violet-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+                    className="liquid-product-card group min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white/60 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-sky-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
                   >
-                    <div className="relative flex aspect-[1.45/1] items-center justify-center overflow-hidden bg-gradient-to-br from-violet-100 via-indigo-50 to-slate-100">
+                    <div className={`product-well relative flex ${
+                      activeCategory === 'game' ? 'aspect-[2/3]' : 'aspect-[1.45/1]'
+                    } items-center justify-center overflow-hidden bg-gradient-to-br from-sky-100 via-sky-50 to-slate-100`}>
                       {image ? (
                         <div
                           aria-hidden="true"
@@ -438,14 +507,16 @@ export default function ProductCatalog({
                           style={{ backgroundImage: `url("${image}")` }}
                         />
                       ) : (
-                        <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/90 text-violet-700 shadow-sm">
+                        <span className="flex h-14 w-14 items-center justify-center text-sky-700">
                           <Icon className="h-7 w-7" />
                         </span>
                       )}
                       <span className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-slate-950/45 to-transparent" />
-                      <span className="absolute bottom-2 left-2 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-semibold text-slate-700">
-                        {categoryLabels[activeCategory]}
-                      </span>
+                      {activeCategory !== 'game' && (
+                        <span className="product-well-badge absolute bottom-2 left-2 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-semibold text-slate-700">
+                          {categoryLabels[activeCategory]}
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center justify-between gap-2 p-3">
                       <span className="min-w-0">
@@ -456,7 +527,7 @@ export default function ProductCatalog({
                           {count} produk tersedia
                         </span>
                       </span>
-                      <ChevronRight className="h-4 w-4 shrink-0 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-violet-600" />
+                      <ChevronRight className="h-4 w-4 shrink-0 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-sky-600" />
                     </div>
                   </button>
                 );
@@ -471,113 +542,40 @@ export default function ProductCatalog({
   return (
     <Card className="shadow-sm border-slate-200/80 overflow-hidden">
       {view !== 'provider' && (
-      <div className="grid grid-cols-4 gap-2 border-b border-slate-100 bg-white p-3 text-center sm:grid-cols-7">
-        <button
-          onClick={() => {
-            setActiveCategory('pulsa');
-            setSelectedOperator('All');
-          }}
-          className={`flex min-h-[68px] flex-col items-center justify-center gap-1.5 rounded-2xl border px-1.5 py-2 text-xs font-semibold transition-colors ${
-            activeCategory === 'pulsa'
-              ? 'border-indigo-100 bg-indigo-50 text-indigo-700'
-              : 'border-transparent bg-slate-50 text-slate-600 hover:bg-slate-100'
-          }`}
+      <div className="grid grid-cols-4 gap-2 border-b border-slate-200 bg-slate-50 p-3 text-center sm:grid-cols-4 lg:grid-cols-8">
+        {categoryOrder.map((category) => {
+          const Icon = categoryIcons[category];
+          const isActive = activeCategory === category;
+          return (
+            <button
+              key={category}
+              onClick={() => {
+                setActiveCategory(category);
+                setSelectedOperator('All');
+                setSelectedVariant('Semua');
+              }}
+              className={`flex min-h-[68px] flex-col items-center justify-center gap-1.5 rounded-2xl border px-1.5 py-2 text-xs font-semibold transition-colors ${
+                isActive
+                  ? categoryStyles[category].active
+                  : 'border-transparent bg-slate-50 text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <span className={`flex h-8 w-8 items-center justify-center ${categoryStyles[category].icon}`}>
+                <Icon className="h-5 w-5" />
+              </span>
+              <span>{categoryLabels[category]}</span>
+            </button>
+          );
+        })}
+        <Link
+          href="/produk"
+          className="flex min-h-[68px] flex-col items-center justify-center gap-1.5 rounded-2xl border border-dashed border-slate-300 bg-white px-1.5 py-2 text-xs font-semibold text-slate-600 transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
         >
-          <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-blue-100 text-blue-600">
-            <Smartphone className="h-4 w-4" />
+          <span className="flex h-8 w-8 items-center justify-center text-blue-600">
+            <LayoutGrid className="h-5 w-5" aria-hidden="true" />
           </span>
-          <span>Pulsa</span>
-        </button>
-
-        <button
-          onClick={() => {
-            setActiveCategory('data');
-            setSelectedOperator('All');
-          }}
-          className={`flex min-h-[68px] flex-col items-center justify-center gap-1.5 rounded-2xl border px-1.5 py-2 text-xs font-semibold transition-colors ${
-            activeCategory === 'data'
-              ? 'border-cyan-100 bg-cyan-50 text-cyan-700'
-              : 'border-transparent bg-slate-50 text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-cyan-100 text-cyan-600">
-            <Wifi className="h-4 w-4" />
-          </span>
-          <span>Paket Data</span>
-        </button>
-
-        <button
-          onClick={() => {
-            setActiveCategory('voucher');
-            setSelectedOperator('All');
-          }}
-          className={`flex min-h-[68px] flex-col items-center justify-center gap-1.5 rounded-2xl border px-1.5 py-2 text-xs font-semibold transition-colors ${
-            activeCategory === 'voucher'
-              ? 'border-violet-100 bg-violet-50 text-violet-700'
-              : 'border-transparent bg-slate-50 text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-violet-100 text-violet-600">
-            <Ticket className="h-4 w-4" />
-          </span>
-          <span>Voucher</span>
-        </button>
-
-        <button
-          onClick={() => setActiveCategory('ewallet')}
-          className={`flex min-h-[68px] flex-col items-center justify-center gap-1.5 rounded-2xl border px-1.5 py-2 text-xs font-semibold transition-colors ${
-            activeCategory === 'ewallet'
-              ? 'border-emerald-100 bg-emerald-50 text-emerald-700'
-              : 'border-transparent bg-slate-50 text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-100 text-emerald-600">
-            <Wallet className="h-4 w-4" />
-          </span>
-          <span>E-Wallet</span>
-        </button>
-
-        <button
-          onClick={() => setActiveCategory('game')}
-          className={`flex min-h-[68px] flex-col items-center justify-center gap-1.5 rounded-2xl border px-1.5 py-2 text-xs font-semibold transition-colors ${
-            activeCategory === 'game'
-              ? 'border-blue-100 bg-blue-50 text-blue-700'
-              : 'border-transparent bg-slate-50 text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-blue-100 text-blue-600">
-            <Gamepad2 className="h-4 w-4" />
-          </span>
-          <span>Game</span>
-        </button>
-
-        <button
-          onClick={() => setActiveCategory('pln')}
-          className={`flex min-h-[68px] flex-col items-center justify-center gap-1.5 rounded-2xl border px-1.5 py-2 text-xs font-semibold transition-colors ${
-            activeCategory === 'pln'
-              ? 'border-amber-100 bg-amber-50 text-amber-700'
-              : 'border-transparent bg-slate-50 text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-amber-100 text-amber-600">
-            <Zap className="h-4 w-4" />
-          </span>
-          <span>PLN</span>
-        </button>
-
-        <button
-          onClick={() => setActiveCategory('tagihan')}
-          className={`flex min-h-[68px] flex-col items-center justify-center gap-1.5 rounded-2xl border px-1.5 py-2 text-xs font-semibold transition-colors ${
-            activeCategory === 'tagihan'
-              ? 'border-rose-100 bg-rose-50 text-rose-700'
-              : 'border-transparent bg-slate-50 text-slate-600 hover:bg-slate-100'
-          }`}
-        >
-          <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-rose-100 text-rose-600">
-            <FileText className="h-4 w-4" />
-          </span>
-          <span>Tagihan</span>
-        </button>
+          <span>Produk lainnya</span>
+        </Link>
       </div>
       )}
 
@@ -613,7 +611,10 @@ export default function ProductCatalog({
                 {['All', ...availableOperators].map((op) => (
                   <button
                     key={op}
-                    onClick={() => setSelectedOperator(op)}
+                    onClick={() => {
+                      setSelectedOperator(op);
+                      setSelectedVariant('Semua');
+                    }}
                     aria-pressed={
                       op === 'All'
                         ? selectedOperator === 'All' && !detectedOperator
@@ -885,13 +886,48 @@ export default function ProductCatalog({
                   aria-pressed={selectedGameProductGroup === group}
                   className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${
                     selectedGameProductGroup === group
-                      ? 'border-violet-600 bg-violet-600 text-white'
+                      ? 'border-sky-600 bg-sky-600 text-white'
                       : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
                   }`}
                 >
                   {group} ({gameProductCounts[group] ?? 0})
                 </button>
               ))}
+            </div>
+          )}
+          {view === 'provider' && variantOptions.length > 1 && (
+            <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
+              {['Semua', ...variantOptions].map((variant) => {
+                const count = variant === 'Semua'
+                  ? products.filter((product) =>
+                      product.status === 'active' &&
+                      product.category === activeCategory &&
+                      (!initialOperator ||
+                        product.operator.toLowerCase() === initialOperator.toLowerCase()),
+                    ).length
+                  : products.filter((product) =>
+                      product.status === 'active' &&
+                      product.category === activeCategory &&
+                      (!initialOperator ||
+                        product.operator.toLowerCase() === initialOperator.toLowerCase()) &&
+                      (product.variant ?? '').toLowerCase() === variant.toLowerCase(),
+                    ).length;
+                return (
+                  <button
+                    key={variant}
+                    type="button"
+                    onClick={() => setSelectedVariant(variant)}
+                    aria-pressed={selectedVariant === variant}
+                    className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                      selectedVariant === variant
+                        ? 'border-sky-600 bg-sky-600 text-white'
+                        : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    {variant} ({count})
+                  </button>
+                );
+              })}
             </div>
           )}
           {view === 'provider' && (
@@ -917,7 +953,19 @@ export default function ProductCatalog({
             )}
           </div>
 
-          {filteredProducts.length === 0 ? (
+          {catalogPending ? (
+            <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-3">
+              {Array.from({ length: 6 }).map((_, index) => (
+                <div key={index} className="flex min-h-28 flex-col justify-between rounded-xl border border-slate-200 bg-white/60 p-3">
+                  <div className="flex items-center gap-2">
+                    <Skeleton className="h-9 w-9 rounded-lg" />
+                    <Skeleton className="h-3 w-full" />
+                  </div>
+                  <Skeleton className="mt-3 h-4 w-2/3" />
+                </div>
+              ))}
+            </div>
+          ) : filteredProducts.length === 0 ? (
             <div className="p-8 text-center rounded-xl bg-slate-50 border border-dashed border-slate-200">
               <HelpCircle className="w-8 h-8 text-slate-400 mx-auto mb-2" />
               <p className="text-xs font-semibold text-slate-700">
@@ -981,10 +1029,10 @@ export default function ProductCatalog({
                         zone,
                       );
                     }}
-                    className="group flex min-h-28 min-w-0 flex-col justify-between rounded-xl border border-slate-200 bg-white p-3 text-left transition-all hover:border-blue-300 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-55 sm:p-3.5"
+                    className="liquid-product-card group flex min-h-28 min-w-0 flex-col justify-between rounded-xl border border-slate-200 bg-white/60 p-3 text-left transition-all hover:border-blue-300 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-55 sm:p-3.5"
                   >
                     <div className="flex min-w-0 items-center gap-2">
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-50 text-slate-500">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg text-slate-500">
                         {product.providerIconUrl ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img

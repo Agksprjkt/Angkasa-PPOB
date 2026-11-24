@@ -1,19 +1,30 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuth } from '@/lib/server/auth';
 import { getDatabase } from '@/lib/server/db/client';
 import { getActivePaymentGateway, getDigiflazzConfig, getQrislyConfig } from '@/lib/server/integration-settings';
-import { createQrislyPayment } from '@/lib/server/qrisly';
+import { createQrislyPayment, type QrislyConfig } from '@/lib/server/qrisly';
 import { isValidQrislyAmount } from '@/lib/deposit-validation';
 import { normalizePhone } from '@/lib/phone';
 import { invoices, products } from '@/lib/server/db/schema';
 import { createOrderCode } from '@/lib/order-codes';
 import { validateOrderDestination } from '@/lib/order-input-validation';
+import {
+  createFlashSaleReservation,
+  releaseFlashSaleCapacity,
+  reserveFlashSaleCapacity,
+} from '@/lib/server/flash-sales';
+import { clientAddress, consumeRateLimit } from '@/lib/server/rate-limit';
+import { flashSaleReservations } from '@/lib/server/db/schema';
 
 export const runtime = 'nodejs';
 
 const uuidPattern = /^[\da-f]{8}-[\da-f]{4}-[1-8][\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i;
+
+// Guards invoice creation so an anonymous caller cannot burn vendor API quota.
+const orderCreateRateLimit = 10;
+const orderCreateRateWindowMs = 10 * 60_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -32,12 +43,50 @@ function presentInvoice(invoice: typeof invoices.$inferSelect) {
       ? `${invoice.destination} (${invoice.serverZoneId})`
       : invoice.destination,
     totalPay: invoice.totalPay,
+    payableAmount: invoice.payableAmount ?? invoice.totalPay,
     paymentStatus: invoice.paymentStatus,
     transactionStatus: invoice.transactionStatus,
     qrString: invoice.qrString,
     expiresAt: invoice.expiresAt,
     createdAt: invoice.createdAt,
   };
+}
+
+// Generates the QRIS and records the amount the buyer must actually pay.
+// Guarded on providerReference so a concurrent request cannot double-generate.
+async function attachQrislyPayment(
+  invoice: typeof invoices.$inferSelect,
+  amount: number,
+  config: QrislyConfig,
+  fallbackExpiresAt: Date,
+) {
+  const payment = await createQrislyPayment(config, amount);
+  if (payment.payableAmount === null) {
+    throw new Error('QRISLY_PAYABLE_AMOUNT_INVALID');
+  }
+  const paymentExpiresAt = payment.expiresAt && payment.expiresAt > new Date()
+    ? payment.expiresAt
+    : fallbackExpiresAt;
+  const [updated] = await getDatabase()
+    .update(invoices)
+    .set({
+      providerReference: payment.historyId,
+      qrString: payment.qrString,
+      payableAmount: payment.payableAmount,
+      expiresAt: paymentExpiresAt,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(invoices.id, invoice.id), isNull(invoices.providerReference)))
+    .returning();
+  if (updated) return updated;
+  const current = await getDatabase()
+    .select()
+    .from(invoices)
+    .where(eq(invoices.id, invoice.id))
+    .limit(1)
+    .then((rows) => rows[0]);
+  if (!current?.qrString) throw new Error('ORDER_INVOICE_SAVE_FAILED');
+  return current;
 }
 
 export async function GET() {
@@ -75,6 +124,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'VALID_IDEMPOTENCY_KEY_REQUIRED' }, { status: 400 });
   }
 
+  const rateLimitOk = await consumeRateLimit(
+    `ppob:rate:order-create:ip:${clientAddress(request)}`,
+    orderCreateRateLimit,
+    orderCreateRateWindowMs,
+  );
+  if (rateLimitOk === false) {
+    return NextResponse.json({ error: 'ORDER_RATE_LIMITED' }, { status: 429 });
+  }
+
   let payload: unknown;
   try {
     payload = await request.json();
@@ -92,6 +150,8 @@ export async function POST(request: NextRequest) {
         'customerPhone',
         'purchaserName',
         'customerEmail',
+        'flashSaleOfferId',
+        'flashSalePriceExpected',
       ].includes(key),
     )
   ) {
@@ -113,6 +173,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'PAYMENT_GATEWAY_NOT_ACTIVE' }, { status: 503 });
   }
   const productId = typeof payload.productId === 'string' ? payload.productId.trim() : '';
+  const flashSaleOfferId = typeof payload.flashSaleOfferId === 'string'
+    ? payload.flashSaleOfferId.trim()
+    : undefined;
+  const flashSalePriceExpected = payload.flashSalePriceExpected;
   const destination = typeof payload.destination === 'string' ? payload.destination.trim() : '';
   const customerName = typeof payload.customerName === 'string'
     ? payload.customerName.trim().slice(0, 100)
@@ -139,8 +203,20 @@ export async function POST(request: NextRequest) {
     ('customerPhone' in payload && typeof payload.customerPhone !== 'string') ||
     ('purchaserName' in payload && typeof payload.purchaserName !== 'string') ||
     ('customerEmail' in payload && typeof payload.customerEmail !== 'string')
+    || ('flashSaleOfferId' in payload && typeof payload.flashSaleOfferId !== 'string')
+    || ('flashSalePriceExpected' in payload &&
+      !Number.isSafeInteger(payload.flashSalePriceExpected))
   ) {
     return NextResponse.json({ error: 'INVALID_ORDER_CONTACT' }, { status: 400 });
+  }
+  if (
+    Boolean(flashSaleOfferId) !== (flashSalePriceExpected !== undefined) ||
+    (
+      flashSalePriceExpected !== undefined &&
+      (!Number.isSafeInteger(flashSalePriceExpected) || Number(flashSalePriceExpected) <= 0)
+    )
+  ) {
+    return NextResponse.json({ error: 'INVALID_FLASH_SALE' }, { status: 400 });
   }
 
   if (!session && (purchaserName.length < 2 || purchaserName.length > 100)) {
@@ -166,6 +242,12 @@ export async function POST(request: NextRequest) {
     .limit(1)
     .then((rows) => rows[0]);
   if (existing) {
+    const existingReservation = await db
+      .select({ offerId: flashSaleReservations.offerId })
+      .from(flashSaleReservations)
+      .where(eq(flashSaleReservations.invoiceId, existing.id))
+      .limit(1)
+      .then((rows) => rows[0]);
     const sameOrder =
       existing.userId === (session?.user.id ?? null) &&
       existing.productId === productId &&
@@ -173,11 +255,36 @@ export async function POST(request: NextRequest) {
       existing.serverZoneId === serverZoneId &&
       existing.customerPhone === customerPhone &&
       existing.purchaserName === purchaserName &&
-      existing.customerEmail === (customerEmail || null);
+      existing.customerEmail === (customerEmail || null) &&
+      existingReservation?.offerId === (flashSaleOfferId ?? undefined);
     if (!sameOrder) {
       return NextResponse.json({ error: 'IDEMPOTENCY_KEY_REUSED' }, { status: 409 });
     }
     if (!existing.qrString) {
+      // A previous attempt reserved the invoice but never got a QRIS back
+      // (provider error). Retry generation instead of leaving it stuck.
+      if (existing.paymentStatus === 'unpaid' && existing.expiresAt > new Date()) {
+        try {
+          const config = await getQrislyConfig();
+          if (config.enabled && config.apiKey && config.qrisId) {
+            const repaired = await attachQrislyPayment(
+              existing,
+              existing.totalPay,
+              { apiKey: config.apiKey, qrisId: config.qrisId, mode: config.mode },
+              existing.expiresAt,
+            );
+            return NextResponse.json({
+              invoice: presentInvoice(repaired),
+              accessToken: session ? null : rawIdempotencyKey,
+            });
+          }
+        } catch (error) {
+          console.error(
+            '[QRISLY_ORDER_PAYMENT_RETRY_FAILED]',
+            error instanceof Error ? error.message : 'Unknown Qrisly error',
+          );
+        }
+      }
       return NextResponse.json({
         invoice: presentInvoice(existing),
         accessToken: session ? null : rawIdempotencyKey,
@@ -210,19 +317,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'PRODUCT_VENDOR_NOT_CONFIGURED' }, { status: 503 });
   }
 
-  const price = session?.user.role === 'agent'
+  const regularPrice = session?.user.role === 'agent'
     ? product.sellPriceAgent
     : product.sellPriceUser;
   if (
-    !Number.isSafeInteger(price) ||
-    price <= 0 ||
+    !Number.isSafeInteger(regularPrice) ||
+    regularPrice <= 0 ||
     !Number.isSafeInteger(product.basePrice) ||
     product.basePrice < 0
   ) {
     return NextResponse.json({ error: 'INVALID_PRODUCT_PRICE' }, { status: 503 });
-  }
-  if (!isValidQrislyAmount(price)) {
-    return NextResponse.json({ error: 'QRISLY_AMOUNT_OUT_OF_RANGE' }, { status: 422 });
   }
 
   let qrislyConfig: Awaited<ReturnType<typeof getQrislyConfig>>;
@@ -255,85 +359,142 @@ export async function POST(request: NextRequest) {
   const invoiceId = randomUUID();
   const invoiceNumber = createOrderCode('INV');
   const guestAccessTokenHash = session ? null : hash(rawIdempotencyKey);
-  const [createdInvoice] = await db
-    .insert(invoices)
-    .values({
-      id: invoiceId,
-      invoiceNumber,
-      userId: session?.user.id ?? null,
-      customerPhone,
-      purchaserName: purchaserName || null,
-      customerEmail: customerEmail || null,
-      productId: product.id,
-      vendorCode: product.vendorCode,
-      productName: product.name,
-      category: product.category,
-      operator: product.operator,
-      destination,
-      serverZoneId,
-      customerName,
-      productPrice: price,
-      basePrice: product.basePrice,
-      adminFee: 0,
-      totalPay: price,
-      paymentMethod: 'qrisly',
-      paymentStatus: 'unpaid',
-      transactionStatus: 'pending',
-      expiresAt: new Date(now.getTime() + 15 * 60_000),
-      idempotencyKey,
-      guestAccessTokenHash,
-    })
-    .onConflictDoNothing({ target: invoices.idempotencyKey })
-    .returning();
+  const expiresAt = new Date(now.getTime() + 15 * 60_000);
+  let price = regularPrice;
+  let createdInvoice: typeof invoices.$inferSelect;
+  try {
+    const creation = await db.transaction(async (tx) => {
+      let saleOfferId: string | null = null;
+      if (flashSaleOfferId) {
+        const expectedPrice = flashSalePriceExpected;
+        if (typeof expectedPrice !== 'number') {
+          return { error: 'FLASH_SALE_UNAVAILABLE' as const };
+        }
+        const reservation = await reserveFlashSaleCapacity(tx, {
+          offerId: flashSaleOfferId,
+          productId: product.id,
+          expectedPrice,
+          now,
+          role: session?.user.role === 'agent' ? 'agent' : session?.user.role === 'admin' ? 'admin' : 'user',
+        });
+        if ('error' in reservation) return { error: reservation.error };
+        saleOfferId = reservation.offerId;
+        price = reservation.salePrice;
+      }
 
-  if (!createdInvoice) {
-    const racedInvoice = await db
-      .select()
-      .from(invoices)
-      .where(eq(invoices.idempotencyKey, idempotencyKey))
-      .limit(1)
-      .then((rows) => rows[0]);
-    if (!racedInvoice) {
-      return NextResponse.json({ error: 'ORDER_COULD_NOT_BE_CREATED' }, { status: 503 });
+      if (!isValidQrislyAmount(price)) {
+        if (saleOfferId) await releaseFlashSaleCapacity(tx, saleOfferId, now);
+        return { error: 'QRISLY_AMOUNT_OUT_OF_RANGE' as const };
+      }
+
+      const [invoice] = await tx
+        .insert(invoices)
+        .values({
+          id: invoiceId,
+          invoiceNumber,
+          userId: session?.user.id ?? null,
+          customerPhone,
+          purchaserName: purchaserName || null,
+          customerEmail: customerEmail || null,
+          productId: product.id,
+          vendorCode: product.vendorCode,
+          productName: product.name,
+          category: product.category,
+          operator: product.operator,
+          destination,
+          serverZoneId,
+          customerName,
+          productPrice: price,
+          basePrice: product.basePrice,
+          adminFee: 0,
+          totalPay: price,
+          paymentMethod: 'qrisly',
+          paymentStatus: 'unpaid',
+          transactionStatus: 'pending',
+          expiresAt,
+          idempotencyKey,
+          guestAccessTokenHash,
+        })
+        .onConflictDoNothing({ target: invoices.idempotencyKey })
+        .returning();
+
+      if (!invoice) {
+        if (saleOfferId) await releaseFlashSaleCapacity(tx, saleOfferId, now);
+        const racedInvoice = await tx
+          .select()
+          .from(invoices)
+          .where(eq(invoices.idempotencyKey, idempotencyKey))
+          .limit(1)
+          .then((rows) => rows[0]);
+        if (!racedInvoice) throw new Error('IDEMPOTENCY_CONFLICT_WITHOUT_INVOICE');
+        const reservation = await tx
+          .select({ offerId: flashSaleReservations.offerId })
+          .from(flashSaleReservations)
+          .where(eq(flashSaleReservations.invoiceId, racedInvoice.id))
+          .limit(1)
+          .then((rows) => rows[0]);
+        const sameOrder =
+          racedInvoice.userId === (session?.user.id ?? null) &&
+          racedInvoice.productId === product.id &&
+          racedInvoice.destination === destination &&
+          racedInvoice.serverZoneId === serverZoneId &&
+          racedInvoice.customerPhone === customerPhone &&
+          racedInvoice.purchaserName === (purchaserName || null) &&
+          racedInvoice.customerEmail === (customerEmail || null) &&
+          reservation?.offerId === (flashSaleOfferId ?? undefined);
+        if (!sameOrder) return { error: 'IDEMPOTENCY_KEY_REUSED' as const };
+        return { racedInvoice };
+      }
+
+      if (saleOfferId) {
+        await createFlashSaleReservation(
+          tx,
+          saleOfferId,
+          { invoiceId: invoice.id },
+          expiresAt,
+          now,
+        );
+      }
+      return { invoice };
+    });
+
+    if ('error' in creation) {
+      const status = creation.error === 'QRISLY_AMOUNT_OUT_OF_RANGE' ? 422
+        : creation.error === 'IDEMPOTENCY_KEY_REUSED' ? 409
+          : 409;
+      return NextResponse.json({ error: creation.error }, { status });
     }
-    const sameOrder =
-      racedInvoice.userId === (session?.user.id ?? null) &&
-      racedInvoice.productId === product.id &&
-      racedInvoice.destination === destination &&
-      racedInvoice.serverZoneId === serverZoneId &&
-      racedInvoice.customerPhone === customerPhone &&
-      racedInvoice.purchaserName === (purchaserName || null) &&
-      racedInvoice.customerEmail === (customerEmail || null);
-    if (!sameOrder) {
-      return NextResponse.json({ error: 'IDEMPOTENCY_KEY_REUSED' }, { status: 409 });
+    if ('racedInvoice' in creation && creation.racedInvoice) {
+      const racedInvoice = creation.racedInvoice;
+      return NextResponse.json({
+        invoice: presentInvoice(racedInvoice),
+        accessToken: session ? null : rawIdempotencyKey,
+        error: racedInvoice.qrString ? undefined : 'PAYMENT_INITIALIZING',
+      }, { status: racedInvoice.qrString ? 200 : 202 });
     }
-    return NextResponse.json({
-      invoice: presentInvoice(racedInvoice),
-      accessToken: session ? null : rawIdempotencyKey,
-      error: racedInvoice.qrString ? undefined : 'PAYMENT_INITIALIZING',
-    }, { status: racedInvoice.qrString ? 200 : 202 });
+    if ('racedInvoice' in creation) {
+      throw new Error('IDEMPOTENCY_CONFLICT_WITHOUT_INVOICE');
+    }
+    createdInvoice = creation.invoice;
+  } catch (error) {
+    console.error(
+      '[QRISLY_ORDER_CREATE_FAILED]',
+      error instanceof Error ? error.message : 'Unknown database error',
+    );
+    return NextResponse.json({ error: 'ORDER_COULD_NOT_BE_CREATED' }, { status: 503 });
   }
 
   try {
-    const payment = await createQrislyPayment({
-      apiKey: qrislyConfig.apiKey,
-      qrisId: qrislyConfig.qrisId,
-      mode: qrislyConfig.mode,
-    }, price);
-    const expiresAt = payment.expiresAt && payment.expiresAt > now
-      ? payment.expiresAt
-      : new Date(now.getTime() + 15 * 60_000);
-    const [updatedInvoice] = await db
-      .update(invoices)
-      .set({
-        providerReference: payment.historyId,
-        qrString: payment.qrString,
-        expiresAt,
-        updatedAt: new Date(),
-      })
-      .where(eq(invoices.id, invoiceId))
-      .returning();
-    if (!updatedInvoice) throw new Error('ORDER_INVOICE_SAVE_FAILED');
+    const updatedInvoice = await attachQrislyPayment(
+      createdInvoice,
+      price,
+      {
+        apiKey: qrislyConfig.apiKey,
+        qrisId: qrislyConfig.qrisId,
+        mode: qrislyConfig.mode,
+      },
+      expiresAt,
+    );
 
     return NextResponse.json({
       invoice: presentInvoice(updatedInvoice),

@@ -15,11 +15,21 @@ export interface Product {
   name: string;
   category: ProductCategory;
   operator: string; // e.g. 'Telkomsel', 'Indosat', 'XL', 'Tri', 'Smartfren', 'PLN', 'PDAM', 'BPJS', 'DANA', 'GoPay', 'OVO', 'ShopeePay', 'Mobile Legends', 'Free Fire', 'PUBG Mobile'
+  // Digiflazz splits one brand into series ("type" in their price list), e.g.
+  // XL -> FlexMax / Xtra Combo Flex / Combo Lite.
+  variant?: string | null;
+  variantSource?: 'sync' | 'manual';
   description: string;
   basePrice: number; // Modal vendor Digiflazz
   sellPriceUser: number; // Harga jual umum
   sellPriceAgent: number; // Harga jual khusus agen
   compareAtPrice?: number | null;
+  flashSaleOfferId?: string | null;
+  flashSalePrice?: number | null;
+  flashSaleCompareAtPrice?: number | null;
+  flashSaleDiscountPercent?: number | null;
+  flashSaleEndsAt?: string | null;
+  flashSaleRemaining?: number | null;
   providerIconUrl?: string | null;
   providerCoverUrl?: string | null;
   providerDescription?: string;
@@ -30,6 +40,36 @@ export interface Product {
 export type CatalogProduct = Omit<Product, 'sellPriceAgent'> & {
   sellPriceAgent?: number;
 };
+
+export interface PromotionalBanner {
+  id: string;
+  title: string;
+  description: string;
+  imageUrl: string;
+  targetPath: string;
+  buttonLabel: string;
+  sortOrder: number;
+  startsAt: string | null;
+  endsAt: string | null;
+  enabled: boolean;
+}
+
+export interface FlashSaleOffer {
+  id: string;
+  productId: string;
+  title: string;
+  salePrice: number;
+  compareAtPrice: number | null;
+  discountPercent: number;
+  startsAt: string;
+  endsAt: string;
+  quotaLimit: number | null;
+  quantitySold: number;
+  quantityReserved: number;
+  quantityRemaining: number | null;
+  status: 'draft' | 'active' | 'paused';
+  product: CatalogProduct;
+}
 
 export interface UserAccount {
   id: string;
@@ -123,7 +163,7 @@ export interface ManualDeposit {
 
 export interface ManualPaymentMethod {
   id: string;
-  type: 'bank_transfer' | 'static_qris';
+  type: 'bank_transfer' | 'ewallet' | 'static_qris';
   label: string;
   bankName: string | null;
   accountNumber: string | null;

@@ -26,3 +26,13 @@ export function classifyQrislyPayment(
   }
   return 'pending';
 }
+
+// A QRIS scan can settle shortly after our local deadline. Keep polling the
+// provider through this window so a late-but-real payment is never marked expired.
+export function isWithinLateSettlementGrace(
+  expiresAt: Date,
+  now: Date,
+  graceMs: number,
+) {
+  return now.getTime() < expiresAt.getTime() + graceMs;
+}

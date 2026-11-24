@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { LoadingState } from '@/components/ui/crystal-loader';
 import { ConfirmationDialog } from '@/components/ui/confirmation-dialog';
 import { usePPOB } from '@/context/PPOBContext';
 import type { Transaction } from '@/types/ppob';
@@ -12,7 +13,6 @@ import {
   ChevronRight,
   CircleAlert,
   FileCode2,
-  LoaderCircle,
   RotateCw,
   Search,
 } from 'lucide-react';
@@ -284,8 +284,7 @@ export default function AdminTransactionsPanel() {
               {isLoading && !data ? (
                 <tr>
                   <td colSpan={7} className="px-4 py-12 text-center text-slate-500">
-                    <LoaderCircle className="mx-auto mb-2 h-5 w-5 animate-spin" />
-                    Memuat riwayat transaksi...
+                    <LoadingState message="Memuat riwayat transaksi..." />
                   </td>
                 </tr>
               ) : data?.transactions.length ? data.transactions.map((transaction) => (
@@ -382,7 +381,7 @@ export default function AdminTransactionsPanel() {
                             aria-label={`Kirim ulang transaksi ${transaction.referenceId}`}
                           >
                             {retryingId === transaction.id
-                              ? <LoaderCircle className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                              ? <RotateCw className="mr-1.5 h-3.5 w-3.5 animate-spin" />
                               : <RotateCw className="mr-1.5 h-3.5 w-3.5" />}
                             Retry
                           </Button>
@@ -400,7 +399,7 @@ export default function AdminTransactionsPanel() {
                             aria-label={`Konfirmasi gagal dan refund transaksi ${transaction.referenceId}`}
                           >
                             {reviewingId === transaction.id
-                              ? <LoaderCircle className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                              ? <CircleAlert className="mr-1.5 h-3.5 w-3.5 animate-pulse" />
                               : <CircleAlert className="mr-1.5 h-3.5 w-3.5" />}
                             Gagal + refund
                           </Button>
@@ -415,7 +414,7 @@ export default function AdminTransactionsPanel() {
                             aria-label={`Tandai transaksi ${transaction.referenceId} untuk pemeriksaan manual`}
                           >
                             {reviewingId === transaction.id
-                              ? <LoaderCircle className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                              ? <CircleAlert className="mr-1.5 h-3.5 w-3.5 animate-pulse" />
                               : <CircleAlert className="mr-1.5 h-3.5 w-3.5" />}
                             Cek manual
                           </Button>
@@ -526,6 +525,8 @@ export default function AdminTransactionsPanel() {
           void updateManualReview(transaction, 'confirm-failed');
         }}
       />
+      {retryingId !== null && <LoadingState message="Mengirim ulang transaksi…" />}
+      {reviewingId !== null && <LoadingState message="Memperbarui transaksi…" />}
     </div>
   );
 }

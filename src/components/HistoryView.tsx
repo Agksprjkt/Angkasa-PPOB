@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useState, useMemo } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { usePPOB } from '@/context/PPOBContext';
 import { Transaction } from '@/types/ppob';
 import {
@@ -11,14 +11,21 @@ import {
   FileText,
   Wallet,
   ArrowDownCircle,
+  ArrowRight,
   ArrowUpCircle,
 } from 'lucide-react';
 import type { BalanceMutation } from '@/types/ppob';
+import { Skeleton } from '@/components/ui/skeleton';
+import { LoadingState } from '@/components/ui/crystal-loader';
 
 interface HistoryViewProps {
   onSelectReceipt: (trx: Transaction) => void;
   onRequireAuth: () => void;
+  mode?: HistoryViewMode;
+  initialStatus?: 'all' | 'success' | 'pending' | 'failed';
 }
+
+export type HistoryViewMode = 'all' | 'transactions' | 'wallet';
 
 type DepositHistoryItem = {
   id: string;
@@ -31,12 +38,19 @@ type DepositHistoryItem = {
   createdAt: string;
 };
 
-export default function HistoryView({ onSelectReceipt, onRequireAuth }: HistoryViewProps) {
-  const { currentUser, transactions, transactionTotal, isGuest } = usePPOB();
+export default function HistoryView({
+  onSelectReceipt,
+  onRequireAuth,
+  mode = 'all',
+  initialStatus = 'all',
+}: HistoryViewProps) {
+  const { currentUser, transactions, transactionTotal, transactionsPending, isGuest } = usePPOB();
 
-  const [activeTab, setActiveTab] = useState<'transactions' | 'deposits' | 'mutations'>('transactions');
+  const [activeTab, setActiveTab] = useState<'transactions' | 'deposits' | 'mutations'>(
+    mode === 'wallet' ? 'mutations' : 'transactions',
+  );
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'success' | 'pending' | 'failed'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'success' | 'pending' | 'failed'>(initialStatus);
   const [olderHistory, setOlderHistory] = useState<{
     ownerKey: string;
     transactions: Transaction[];
@@ -59,6 +73,7 @@ export default function HistoryView({ onSelectReceipt, onRequireAuth }: HistoryV
     error: string;
   } | null>(null);
   const mutationRequestInFlight = useRef(false);
+  const autoLoadMutationsStarted = useRef(false);
 
   const historyOwnerKey = `${currentUser?.id ?? 'guest'}:${transactions[0]?.id ?? 'none'}`;
   const currentOlderHistory = olderHistory?.ownerKey === historyOwnerKey ? olderHistory : null;
@@ -76,7 +91,7 @@ export default function HistoryView({ onSelectReceipt, onRequireAuth }: HistoryV
     ? mutationHistory
     : null;
 
-  const loadMutationPage = async (page: number) => {
+  const loadMutationPage = useCallback(async (page: number) => {
     if (isGuest || mutationRequestInFlight.current) return;
     mutationRequestInFlight.current = true;
     const previous = currentMutationHistory;
@@ -135,14 +150,21 @@ export default function HistoryView({ onSelectReceipt, onRequireAuth }: HistoryV
     } finally {
       mutationRequestInFlight.current = false;
     }
-  };
+  }, [currentMutationHistory, isGuest, mutationOwnerKey]);
 
-  const showMutationHistory = () => {
+  const showMutationHistory = useCallback(() => {
     setActiveTab('mutations');
     if (isGuest) return;
     if (currentMutationHistory || mutationRequestInFlight.current) return;
     void loadMutationPage(1);
-  };
+  }, [currentMutationHistory, isGuest, loadMutationPage]);
+
+  useEffect(() => {
+    if (mode !== 'wallet' || isGuest || autoLoadMutationsStarted.current) return;
+    autoLoadMutationsStarted.current = true;
+    const timeoutId = window.setTimeout(() => void loadMutationPage(1), 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [isGuest, loadMutationPage, mode]);
 
   const loadMoreTransactions = async () => {
     if (transactionHistoryLoading || !hasMoreTransactions) return;
@@ -255,31 +277,43 @@ export default function HistoryView({ onSelectReceipt, onRequireAuth }: HistoryV
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-      {/* Top Header & Tab Switcher */}
       <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h2 className="font-bold text-base text-slate-900">Riwayat</h2>
-          <p className="text-xs text-slate-500">Lihat transaksi, pengajuan deposit, dan perubahan saldo.</p>
+          <h2 className="font-bold text-base text-slate-900">
+            {mode === 'transactions' ? 'Transaksi' : mode === 'wallet' ? 'Mutasi saldo' : 'Riwayat'}
+          </h2>
+          <p className="text-xs text-slate-500">
+            {mode === 'transactions'
+              ? 'Lihat status dan detail transaksi produk Anda.'
+              : mode === 'wallet'
+                ? 'Pantau perubahan saldo dan riwayat isi saldo.'
+                : 'Lihat transaksi, pengajuan deposit, dan perubahan saldo.'}
+          </p>
         </div>
 
-        <div className="grid grid-cols-3 gap-1 rounded-xl bg-slate-200/80 p-1">
-          <button
-            type="button"
-            aria-pressed={activeTab === 'transactions'}
-            onClick={() => setActiveTab('transactions')}
-            className={`py-1.5 px-3 rounded-lg text-xs font-semibold transition-all ${
-              activeTab === 'transactions'
-                ? 'bg-white text-slate-900 shadow-sm'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            Transaksi ({transactionTotal.toLocaleString('id-ID')})
-          </button>
+        {mode !== 'transactions' && (
+          <div className={`grid gap-1 rounded-xl bg-slate-200/80 p-1 ${
+            mode === 'wallet' ? 'grid-cols-2' : 'grid-cols-3'
+          }`}>
+            {mode === 'all' && (
+              <button
+                type="button"
+                aria-pressed={activeTab === 'transactions'}
+                onClick={() => setActiveTab('transactions')}
+                className={`min-h-11 rounded-lg px-3 py-2 text-xs font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
+                  activeTab === 'transactions'
+                    ? 'bg-white text-slate-900 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Transaksi ({transactionTotal.toLocaleString('id-ID')})
+              </button>
+            )}
           <button
             type="button"
             aria-pressed={activeTab === 'deposits'}
             onClick={() => showDepositHistory()}
-            className={`py-1.5 px-3 rounded-lg text-xs font-semibold transition-all ${
+            className={`min-h-11 rounded-lg px-3 py-2 text-xs font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
               activeTab === 'deposits'
                 ? 'bg-white text-slate-900 shadow-sm'
                 : 'text-slate-600 hover:text-slate-900'
@@ -291,7 +325,7 @@ export default function HistoryView({ onSelectReceipt, onRequireAuth }: HistoryV
             type="button"
             aria-pressed={activeTab === 'mutations'}
             onClick={showMutationHistory}
-            className={`py-1.5 px-3 rounded-lg text-xs font-semibold transition-all ${
+            className={`min-h-11 rounded-lg px-3 py-2 text-xs font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
               activeTab === 'mutations'
                 ? 'bg-white text-slate-900 shadow-sm'
                 : 'text-slate-600 hover:text-slate-900'
@@ -299,18 +333,33 @@ export default function HistoryView({ onSelectReceipt, onRequireAuth }: HistoryV
           >
             Mutasi saldo
           </button>
-        </div>
+          </div>
+        )}
       </div>
 
-      {/* TAB 1: TRANSAKSI PRODUK */}
-      {activeTab === 'transactions' && (
+      {mode !== 'wallet' && activeTab === 'transactions' && (
         <div className="p-4 sm:p-6 space-y-4">
-          {/* Search & Filter Bar */}
+          {isGuest ? (
+            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center">
+              <FileText className="mx-auto mb-2 h-7 w-7 text-slate-400" aria-hidden="true" />
+              <p className="text-sm font-semibold text-slate-700">Masuk untuk melihat riwayat transaksi</p>
+              <p className="mt-1 text-xs text-slate-500">Riwayat pembelian tersedia di akun Anda.</p>
+              <button
+                type="button"
+                onClick={onRequireAuth}
+                className="mt-4 rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold text-white transition hover:bg-slate-800"
+              >
+                Masuk / Daftar
+              </button>
+            </div>
+          ) : (
+          <>
           <div className="flex flex-col sm:flex-row gap-2">
             <div className="relative flex-1">
               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
+                aria-label="Cari transaksi"
                 placeholder="Cari ID Referensi, nomor tujuan, atau produk..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
@@ -342,7 +391,22 @@ export default function HistoryView({ onSelectReceipt, onRequireAuth }: HistoryV
           </div>
 
           {/* List of Transactions */}
-          {filteredTransactions.length === 0 ? (
+          {transactionsPending ? (
+            <div className="space-y-3">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <div key={index} className="flex items-center justify-between gap-3 rounded-xl border border-slate-100 bg-white p-3">
+                  <div className="flex items-center gap-3">
+                    <Skeleton className="h-9 w-9 rounded-lg" />
+                    <div className="space-y-1.5">
+                      <Skeleton className="h-3 w-32" />
+                      <Skeleton className="h-2.5 w-24" />
+                    </div>
+                  </div>
+                  <Skeleton className="h-4 w-16" />
+                </div>
+              ))}
+            </div>
+          ) : filteredTransactions.length === 0 ? (
             <div className="p-8 text-center rounded-xl bg-slate-50 border border-dashed border-slate-200">
               <FileText className="w-8 h-8 text-slate-400 mx-auto mb-2" />
               <p className="text-sm font-semibold text-slate-700">Tidak ada riwayat transaksi</p>
@@ -415,8 +479,9 @@ export default function HistoryView({ onSelectReceipt, onRequireAuth }: HistoryV
                         <div className="text-sm sm:text-base font-bold text-slate-900 font-sans">
                           Rp {trx.amount.toLocaleString('id-ID')}
                         </div>
-                        <span className="mt-0.5 text-[11px] font-semibold text-blue-600">
-                          Lihat detail →
+                        <span className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600">
+                          Lihat detail
+                          <ArrowRight className="h-3 w-3" aria-hidden="true" />
                         </span>
                       </div>
                     </div>
@@ -447,6 +512,8 @@ export default function HistoryView({ onSelectReceipt, onRequireAuth }: HistoryV
               </button>
             </div>
           )}
+          </>
+          )}
         </div>
       )}
 
@@ -467,7 +534,7 @@ export default function HistoryView({ onSelectReceipt, onRequireAuth }: HistoryV
               </button>
             </div>
           ) : depositHistoryLoading ? (
-            <p className="py-6 text-center text-sm text-slate-500" role="status">Memuat riwayat isi saldo…</p>
+            <LoadingState message="Memuat riwayat isi saldo…" />
           ) : depositHistoryError ? (
             <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-center">
               <p className="text-sm text-rose-700" role="alert">{depositHistoryError}</p>
@@ -496,7 +563,7 @@ export default function HistoryView({ onSelectReceipt, onRequireAuth }: HistoryV
                 return (
                   <div key={deposit.id} className="flex items-start justify-between gap-3 py-3.5">
                     <div className="flex items-start gap-3">
-                      <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-100 text-blue-700">
+                      <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center text-blue-700">
                         <Wallet className="h-4 w-4" aria-hidden="true" />
                       </div>
                       <div className="min-w-0">
@@ -548,7 +615,7 @@ export default function HistoryView({ onSelectReceipt, onRequireAuth }: HistoryV
                   </button>
                 </div>
               ) : !currentMutationHistory?.mutations.length && currentMutationHistory?.loading ? (
-                <p className="py-6 text-center text-sm text-slate-500" role="status">Memuat mutasi saldo…</p>
+                <LoadingState message="Memuat mutasi saldo…" />
               ) : currentMutationHistory?.error && !currentMutationHistory.mutations.length ? (
                 <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-center">
                   <p className="text-sm text-rose-700" role="alert">{currentMutationHistory.error}</p>

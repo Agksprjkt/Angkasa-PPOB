@@ -20,6 +20,16 @@ export function normalizeOrderLookupIdentifier(value: string): OrderLookupIdenti
   return phone ? { kind: 'phone', value: phone } : null;
 }
 
+// Public lookup is unauthenticated, so it only ever shows a partial destination.
+export function maskOrderLookupDestination(value: string) {
+  const trimmed = value.trim();
+  if (trimmed.length <= 4) return '*'.repeat(trimmed.length);
+  const head = Math.min(4, Math.floor(trimmed.length / 2));
+  const tail = trimmed.length >= 8 ? 4 : 0;
+  const stars = Math.max(3, trimmed.length - head - tail);
+  return `${trimmed.slice(0, head)}${'*'.repeat(stars)}${tail ? trimmed.slice(-tail) : ''}`;
+}
+
 export function hashOrderLookupValue(purpose: string, value: string) {
   return createHmac('sha256', secret())
     .update(`payku:order-lookup:${purpose}:${value}`)

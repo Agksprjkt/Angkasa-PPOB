@@ -11,14 +11,6 @@ import AuthModal from '@/components/AuthModal';
 import DepositModal from '@/components/DepositModal';
 import Header from '@/components/Header';
 import { Button } from '@/components/ui/button';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { usePPOB } from '@/context/PPOBContext';
 import type { Product, ProductCategory } from '@/types/ppob';
 
@@ -96,7 +88,7 @@ export default function ProviderCheckoutPage() {
     return (
       <main className="mx-auto max-w-3xl px-4 py-16 text-center">
         <h1 className="text-xl font-bold text-slate-900">Kategori tidak ditemukan</h1>
-        <Link href="/" className="mt-4 inline-flex text-sm font-semibold text-violet-700">
+        <Link href="/" className="mt-4 inline-flex text-sm font-semibold text-sky-700">
           Kembali ke katalog
         </Link>
       </main>
@@ -104,35 +96,17 @@ export default function ProviderCheckoutPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#f7f5fb] pb-28">
+    <div className="flex min-h-screen flex-col bg-white pb-28">
       <Header
+        activeTab="home"
         onOpenAuth={() => setIsAuthOpen(true)}
-        onOpenHistory={() => router.push('/?tab=history')}
         onOpenOrders={() => router.push('/cek-pesanan')}
-        onOpenLegal={() => router.push('/legal')}
+        onOpenDeposit={() => setIsDepositOpen(true)}
         mobileBack
-        onBack={() => router.push('/')}
+        backFallback={category ? `/?category=${encodeURIComponent(category)}` : '/'}
       />
 
-      <div className="mx-auto max-w-6xl px-4 py-5 sm:px-6 sm:py-8">
-        <Breadcrumb className="mb-4">
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbLink href="/">Beranda</BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbLink href={`/?category=${encodeURIComponent(category)}`}>
-                {categoryLabels[category]}
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage>{providerName}</BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
-
+      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-5 sm:px-6 sm:py-8">
         <section className="mb-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           {provider?.providerCoverUrl && (
             <div
@@ -152,7 +126,7 @@ export default function ProviderCheckoutPage() {
               />
             ) : null}
             <div className="min-w-0">
-              <p className="text-xs font-medium text-violet-700">{categoryLabels[category]}</p>
+              <p className="text-xs font-medium text-sky-700">{categoryLabels[category]}</p>
               <h1 className="text-xl font-bold text-slate-900">{providerName}</h1>
               {provider?.providerDescription && (
                 <p className="mt-1 text-sm text-slate-600">{provider.providerDescription}</p>
@@ -207,14 +181,14 @@ export default function ProviderCheckoutPage() {
               <div className="border-t border-slate-200 pt-3">
                 <div className="flex justify-between gap-3">
                   <dt className="font-semibold text-slate-700">Total Bayar</dt>
-                  <dd className="font-bold text-violet-700">
+                  <dd className="font-bold text-sky-700">
                     Rp {selectedPrice.toLocaleString('id-ID')}
                   </dd>
                 </div>
               </div>
             </dl>
             <Button
-              className="mt-4 w-full bg-violet-600 text-white hover:bg-violet-700"
+              className="mt-4 w-full bg-sky-600 text-white hover:bg-sky-700"
               onClick={() => setOrderOpen(true)}
               disabled={!selectedProduct}
             >
@@ -226,7 +200,7 @@ export default function ProviderCheckoutPage() {
             </p>
           </aside>
         </div>
-      </div>
+      </main>
 
       {selectedProduct ? (
         <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur lg:hidden">
@@ -239,7 +213,7 @@ export default function ProviderCheckoutPage() {
             </div>
             <Button
               onClick={() => setOrderOpen(true)}
-              className="shrink-0 rounded-xl bg-violet-600 px-5 text-white hover:bg-violet-700"
+              className="shrink-0 rounded-xl bg-sky-600 px-5 text-white hover:bg-sky-700"
             >
               Bayar
               <ArrowRight className="ml-1.5 h-4 w-4" />
@@ -253,9 +227,7 @@ export default function ProviderCheckoutPage() {
           onOpenAuth={() => setIsAuthOpen(true)}
           onOpenDeposit={() => setIsDepositOpen(true)}
           onOpenHome={() => router.push('/')}
-          onOpenHistory={() => router.push('/?tab=history')}
           onOpenOrders={() => router.push('/cek-pesanan')}
-          onOpenLegal={() => router.push('/legal')}
           className="lg:hidden"
         />
       )}
@@ -270,6 +242,6 @@ export default function ProviderCheckoutPage() {
       />
       <AuthModal open={isAuthOpen} onOpenChange={setIsAuthOpen} />
       <DepositModal open={isDepositOpen} onOpenChange={setIsDepositOpen} />
-    </main>
+    </div>
   );
 }

@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { isValidQrislyAmount } from '@/lib/deposit-validation';
+import { parseQrislyExpiry, resolveQrislyPayableAmount } from '@/lib/qrisly-protocol';
 
 export type QrislyConfig = {
   apiKey: string;
@@ -42,7 +43,8 @@ export async function createQrislyPayment(config: QrislyConfig, amount: number) 
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-API-Key': config.apiKey },
       body: JSON.stringify({
-        qris_id: config.qrisId,
+        // Qrisly expects a numeric qris_id; a string is rejected with HTTP 400.
+        qris_id: Number(config.qrisId),
         amount,
         output_type: 'string',
         unique_amount: false,
@@ -68,13 +70,18 @@ export async function createQrislyPayment(config: QrislyConfig, amount: number) 
   ) {
     throw new Error(`Qrisly gagal membuat QRIS (HTTP ${response.status}).`);
   }
-  const expiry = typeof result.expiry_time === 'string'
-    ? new Date(result.expiry_time)
-    : null;
+  const expiry = parseQrislyExpiry(result.expiry_time);
   return {
     historyId,
     qrString: result.qris_string.trim(),
-    expiresAt: expiry && Number.isFinite(expiry.getTime()) ? expiry : null,
+    // Qrisly adds a unique code on top of the requested amount, so the buyer
+    // must pay final_amount, not the amount we asked for.
+    payableAmount: resolveQrislyPayableAmount(
+      amount,
+      result.final_amount,
+      result.original_amount,
+    ),
+    expiresAt: expiry,
   };
 }
 

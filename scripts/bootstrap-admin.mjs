@@ -7,7 +7,23 @@ import { hashPassword } from 'better-auth/crypto';
 import nextEnv from '@next/env';
 import postgres from 'postgres';
 
+import { parseSystemConfig, resolveDatabaseUrls } from '../src/lib/system-config-core.ts';
+
 nextEnv.loadEnvConfig(process.cwd());
+
+// Connection fields are never encrypted, so the config file is read directly
+// instead of importing the server-only store.
+function readSystemConfig() {
+  const file = resolve(
+    process.cwd(),
+    process.env.SYSTEM_CONFIG_FILE || '.data/system-config.json',
+  );
+  try {
+    return parseSystemConfig(JSON.parse(readFileSync(file, 'utf8')));
+  } catch {
+    return parseSystemConfig({});
+  }
+}
 
 if (process.env.BOOTSTRAP_ADMIN_ENABLED !== 'true') {
   console.log('Admin bootstrap is disabled; set BOOTSTRAP_ADMIN_ENABLED=true to enable it.');
@@ -48,7 +64,7 @@ function getDatabaseMode() {
     contents = readFileSync(modeFile, 'utf8');
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
-      const mode = process.env.DATABASE_PROVIDER ?? 'sqlite';
+      const mode = process.env.DATABASE_PROVIDER ?? readSystemConfig().database.provider;
       if (mode === 'sqlite' || mode === 'postgres') return mode;
       throw new Error('DATABASE_PROVIDER must be "sqlite" or "postgres"');
     }
@@ -74,7 +90,7 @@ function getDatabaseMode() {
 function getPostgresUrl() {
   const url = process.env.DATABASE_URL_FILE
     ? readFileSync(process.env.DATABASE_URL_FILE, 'utf8').trim()
-    : process.env.DATABASE_URL;
+    : process.env.DATABASE_URL?.trim() || resolveDatabaseUrls(readSystemConfig().database).url;
   if (!url) throw new Error('Set DATABASE_URL or DATABASE_URL_FILE for PostgreSQL');
   const parsedUrl = new URL(url);
   if (parsedUrl.protocol !== 'postgres:' && parsedUrl.protocol !== 'postgresql:') {

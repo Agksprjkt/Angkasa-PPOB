@@ -5,6 +5,45 @@ import {
   getNextDigiflazzProductSyncAt,
   isDigiflazzProductSyncDue,
 } from '../src/lib/digiflazz-product-sync-schedule.ts';
+import { resolveVariant } from '../src/lib/product-variant.ts';
+
+test('product type comes from the Digiflazz type field', () => {
+  assert.deepEqual(
+    resolveVariant({ type: 'Combo Lite', productName: 'XL Combo Lite S', category: 'data' }),
+    { variant: 'Combo Lite', source: 'type' },
+  );
+  assert.deepEqual(
+    resolveVariant({ type: 'FlexMax', productName: 'XL Data FlexMax 6 GB', category: 'data' }),
+    { variant: 'FlexMax', source: 'type' },
+  );
+});
+
+test('generic types fall back to the product name, longest keyword first', () => {
+  assert.deepEqual(
+    resolveVariant({ type: 'Umum', productName: 'XL Xtra Combo Flex S 28 Hari', category: 'data' }),
+    { variant: 'Xtra Combo Flex', source: 'name' },
+  );
+  assert.deepEqual(
+    resolveVariant({ type: null, productName: 'XL FlexMax 10 GB', category: 'data' }),
+    { variant: 'Flexmax', source: 'name' },
+  );
+});
+
+test('flat categories never get a product type', () => {
+  for (const category of ['pulsa', 'pln', 'ewallet', 'tagihan', 'game']) {
+    assert.deepEqual(
+      resolveVariant({ type: 'Combo Lite', productName: 'XL Combo Lite', category }),
+      { variant: null, source: 'none' },
+    );
+  }
+});
+
+test('unmatched names leave the type empty instead of guessing', () => {
+  assert.deepEqual(
+    resolveVariant({ type: '-', productName: 'XL 10 GB', category: 'data' }),
+    { variant: null, source: 'none' },
+  );
+});
 
 test('sync pricing applies customer and Member markups independently', () => {
   assert.deepEqual(

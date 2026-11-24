@@ -8,8 +8,8 @@ import {
   ShieldCheck,
   AlertTriangle,
   ArrowRight,
-  Loader2,
 } from 'lucide-react';
+import { LoadingOverlay } from '@/components/ui/crystal-loader';
 
 interface CheckoutModalProps {
   product: Product | null;
@@ -180,10 +180,7 @@ export default function CheckoutModal({
             className="flex-1 py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs sm:text-sm shadow-md transition-colors disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2"
           >
             {isLoading ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Memproses Vendor...</span>
-              </>
+              <span>Memproses Vendor...</span>
             ) : (
               <>
                 <ShieldCheck className="w-4 h-4" />
@@ -193,6 +190,7 @@ export default function CheckoutModal({
           </button>
         </div>
       </div>
+      {isLoading && <LoadingOverlay message="Memproses pesanan…" />}
     </div>
   );
 }

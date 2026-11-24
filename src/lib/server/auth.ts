@@ -8,6 +8,7 @@ import { getDatabase } from './db/client';
 import { databaseMode } from './db/database-mode';
 import { sendWhatsAppOtp } from './whatsapp';
 import { DEFAULT_STORE_NAME } from '@/lib/store-branding';
+import { syntheticEmailForPhone } from '@/lib/synthetic-email';
 
 const baseURL = process.env.BETTER_AUTH_URL ?? 'http://localhost:3000';
 const trustedOrigins = [
@@ -37,6 +38,9 @@ const createAuth = (secret: string) =>
       enabled: true,
       requireEmailVerification: false,
       minPasswordLength: 8,
+      // A phone-number reset means the buyer lost control of the account, so
+      // every existing session must be revoked.
+      revokeSessionsOnPasswordReset: true,
     },
     user: {
       additionalFields: {
@@ -66,13 +70,10 @@ const createAuth = (secret: string) =>
         phoneNumberValidator: (phoneNumber) =>
           /^\+[1-9]\d{7,14}$/.test(phoneNumber),
         signUpOnVerification: {
-          getTempEmail: (phoneNumber) =>
-            `${phoneNumber.replace(/\D/g, '')}@phone.payku.invalid`,
+          getTempEmail: (phoneNumber) => syntheticEmailForPhone(phoneNumber),
           getTempName: () => `Pengguna ${DEFAULT_STORE_NAME}`,
         },
         sendOTP: ({ phoneNumber, code }) =>
-          sendWhatsAppOtp(phoneNumber, code),
-        sendPasswordResetOTP: ({ phoneNumber, code }) =>
           sendWhatsAppOtp(phoneNumber, code),
       }),
     ],

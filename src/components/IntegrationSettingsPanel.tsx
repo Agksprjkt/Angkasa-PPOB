@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ChevronDown } from 'lucide-react';
 import { ConfirmationDialog } from '@/components/ui/confirmation-dialog';
+import { LoadingState } from '@/components/ui/crystal-loader';
 import {
   Dialog,
   DialogContent,
@@ -587,9 +588,10 @@ export default function IntegrationSettingsPanel({
 
   if (isLoading) {
     return (
-      <p className="text-sm text-slate-500">
-        {section === 'payments' ? 'Memuat pengaturan Qrisly…' : 'Memuat pengaturan integrasi…'}
-      </p>
+      <LoadingState
+        message={section === 'payments' ? 'Memuat pengaturan Qrisly…' : 'Memuat pengaturan integrasi…'}
+
+      />
     );
   }
   if (!snapshot) {

@@ -41,7 +41,8 @@ export async function refreshQrislyDeposit(depositId: string) {
     apiKey: config.apiKey,
     mode: config.mode,
   }, deposit.providerReference);
-  const paymentResult = classifyQrislyPayment(payment.status, payment.amount, deposit.amount);
+  const expectedAmount = deposit.payableAmount ?? deposit.amount;
+  const paymentResult = classifyQrislyPayment(payment.status, payment.amount, expectedAmount);
   if (paymentResult === 'pending') return deposit;
 
   return db.transaction(async (tx) => {
@@ -68,7 +69,7 @@ export async function refreshQrislyDeposit(depositId: string) {
       return updated ?? current;
     }
 
-    if (paymentResult === 'amount_mismatch' || payment.amount !== current.amount) {
+    if (paymentResult === 'amount_mismatch' || payment.amount !== (current.payableAmount ?? current.amount)) {
       const [updated] = await tx
         .update(deposits)
         .set({

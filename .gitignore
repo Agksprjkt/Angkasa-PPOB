@@ -14,3 +14,13 @@ yarn-error.log*
 .impeccable/mocks/
 .impeccable/questions/
 .impeccable/review/
+
+# Deployment secrets and database backups. Both are listed in .dockerignore too,
+# but that only protects the image; this keeps them out of git as well.
+secrets/
+backups/
+*.dump
+*.tar.gz
+
+# Local code intelligence index (codebase-memory-mcp)
+.codebase-memory/

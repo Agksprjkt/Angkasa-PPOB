@@ -40,7 +40,13 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(
       {
-        transactions: rows,
+        // Store margin is internal; only admins may see the profit column.
+        transactions: session.user.role === 'admin'
+          ? rows
+          : rows.map(({ profit, ...transaction }) => {
+            void profit;
+            return transaction;
+          }),
         page,
         pageSize,
         total: totalRows[0]?.total ?? 0,

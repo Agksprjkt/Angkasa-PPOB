@@ -116,6 +116,21 @@ affected row before exposing the account. `/admin` and `/agent` validate the
 session and role on the server; unauthenticated or mismatched sessions are
 redirected to `/`.
 
+## Promo and Flash Sale
+
+Admins can manage homepage banners and scheduled product offers from **Admin →
+Promo & Flash Sale**. Banner destinations must be internal paths; banner images
+may use HTTPS URLs or local paths. Flash Sale schedules for the same product
+cannot overlap. A sale price must be at least the product's vendor cost and
+lower than both regular customer and member prices; the sale price is the same
+for both roles. An empty quota means unlimited availability. Reserved payment
+orders count against quota so simultaneous purchases cannot exceed the limit.
+Wallet orders count as sold after the provider confirms success; failed orders
+release their reservation. Qrisly orders release their reservation when the
+invoice expires or enters review, and count as sold once payment is confirmed.
+The SQLite and PostgreSQL runtime migrations must be applied before using these
+features.
+
 ## Current scope
 
 Auth, catalog, and transaction schema use local SQLite for development. Public

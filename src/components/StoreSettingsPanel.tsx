@@ -7,6 +7,16 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { LoadingState } from '@/components/ui/crystal-loader';
+import { Plus, Trash2 } from 'lucide-react';
+import {
+  parseSocialLinks,
+  socialLinkLabels,
+  socialLinkPlaceholders,
+  socialLinkTypes,
+  type SocialLink,
+  type SocialLinkType,
+} from '@/lib/social-links';
 
 type StoreSettings = {
   storeName: string;
@@ -14,6 +24,9 @@ type StoreSettings = {
   description: string;
   supportPhone: string;
   logoFile: string | null;
+  iconFile: string | null;
+  faviconFile: string | null;
+  socialLinks: string;
   seoTitle: string;
   seoDescription: string;
   googleSiteVerification: string;
@@ -23,12 +36,43 @@ type StoreSettings = {
 
 type StoreSettingsView = 'profile' | 'seo';
 
+type AssetKind = 'logo' | 'icon' | 'favicon';
+
+const assetMeta: Record<AssetKind, {
+  title: string;
+  hint: string;
+  field: 'logoFile' | 'iconFile' | 'faviconFile';
+  previewClass: string;
+}> = {
+  logo: {
+    title: 'Logo toko',
+    hint: 'Tampil di header aplikasi. PNG/JPG/WebP, maks. 1 MB.',
+    field: 'logoFile',
+    previewClass: 'h-24 w-24 rounded-2xl object-contain p-2',
+  },
+  icon: {
+    title: 'Icon aplikasi',
+    hint: 'Dipakai PWA dan apple-touch-icon. Disarankan 512×512 px PNG.',
+    field: 'iconFile',
+    previewClass: 'h-24 w-24 rounded-2xl object-cover',
+  },
+  favicon: {
+    title: 'Favicon',
+    hint: 'Ikon tab browser. Disarankan 32×32 atau 48×48 px PNG.',
+    field: 'faviconFile',
+    previewClass: 'h-24 w-24 rounded-2xl object-contain p-3',
+  },
+};
+
 const emptySettings: StoreSettings = {
   storeName: '',
   tagline: '',
   description: '',
   supportPhone: '',
   logoFile: null,
+  iconFile: null,
+  faviconFile: null,
+  socialLinks: '[]',
   seoTitle: '',
   seoDescription: '',
   googleSiteVerification: '',
@@ -37,13 +81,21 @@ const emptySettings: StoreSettings = {
 };
 
 export default function StoreSettingsPanel({ view }: { view: StoreSettingsView }) {
-  const { addToast, updateStoreName } = usePPOB();
+  const { addToast, updateStoreName, refreshStoreIdentity } = usePPOB();
   const [settings, setSettings] = useState<StoreSettings>(emptySettings);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
+  const [uploadingKind, setUploadingKind] = useState<AssetKind | null>(null);
+  const [deletingKind, setDeletingKind] = useState<AssetKind | null>(null);
+  const [isSavingContacts, setIsSavingContacts] = useState(false);
   const [isGeneratingKey, setIsGeneratingKey] = useState(false);
   const [isSubmittingIndexNow, setIsSubmittingIndexNow] = useState(false);
+
+  // Contact rows are edited as a draft array and saved together, so a half-typed
+  // row never reaches the public footer.
+  const [contactDraft, setContactDraft] = useState<SocialLink[]>(() =>
+    parseSocialLinks(JSON.parse(emptySettings.socialLinks)),
+  );
 
   useEffect(() => {
     let active = true;
@@ -56,7 +108,14 @@ export default function StoreSettingsPanel({ view }: { view: StoreSettingsView }
         return body.settings;
       })
       .then((result) => {
-        if (active) setSettings(result);
+        if (active) {
+          setSettings(result);
+          try {
+            setContactDraft(parseSocialLinks(JSON.parse(result.socialLinks || '[]')));
+          } catch {
+            setContactDraft([]);
+          }
+        }
       })
       .catch((error: unknown) => {
         if (active) {
@@ -104,32 +163,90 @@ export default function StoreSettingsPanel({ view }: { view: StoreSettingsView }
     }
   };
 
-  const uploadLogo = async (file?: File) => {
+  const uploadAsset = async (kind: AssetKind, file?: File) => {
     if (!file) return;
-    setIsUploading(true);
+    setUploadingKind(kind);
     try {
       const form = new FormData();
+      form.set('kind', kind);
       form.set('file', file);
-      const response = await fetch('/api/admin/store-settings/logo', {
+      const response = await fetch('/api/admin/store-settings/assets', {
         method: 'POST',
         body: form,
       });
-      const body = await response.json() as { logoUrl?: string; error?: string };
-      if (!response.ok || !body.logoUrl) {
-        throw new Error(body.error ?? 'Logo toko gagal diunggah.');
+      const body = await response.json() as { filename?: string; error?: string };
+      if (!response.ok || !body.filename) {
+        throw new Error(body.error ?? 'Berkas gagal diunggah.');
       }
-      const filename = body.logoUrl.split('/').pop();
-      if (!filename) throw new Error('Logo berhasil diunggah, tetapi lokasinya tidak valid.');
-      updateSetting('logoFile', decodeURIComponent(filename));
-      addToast('Logo diperbarui', 'Logo toko berhasil diunggah.', 'success');
+      updateSetting(assetMeta[kind].field, body.filename);
+      await refreshStoreIdentity().catch(() => {});
+      addToast('Berkas diperbarui', `${assetMeta[kind].title} berhasil diunggah.`, 'success');
     } catch (error) {
       addToast(
-        'Logo gagal diunggah',
+        'Berkas gagal diunggah',
         error instanceof Error ? error.message : 'Silakan coba kembali.',
         'error',
       );
     } finally {
-      setIsUploading(false);
+      setUploadingKind(null);
+    }
+  };
+
+  const deleteAsset = async (kind: AssetKind) => {
+    if (!window.confirm(`Hapus ${assetMeta[kind].title.toLocaleLowerCase('id-ID')}?`)) return;
+    setDeletingKind(kind);
+    try {
+      const response = await fetch(
+        `/api/admin/store-settings/assets?kind=${encodeURIComponent(kind)}`,
+        { method: 'DELETE' },
+      );
+      const body = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(body.error ?? 'Berkas gagal dihapus.');
+      updateSetting(assetMeta[kind].field, null);
+      await refreshStoreIdentity().catch(() => {});
+      addToast('Berkas dihapus', `${assetMeta[kind].title} kembali ke bawaan.`, 'success');
+    } catch (error) {
+      addToast(
+        'Berkas gagal dihapus',
+        error instanceof Error ? error.message : 'Silakan coba kembali.',
+        'error',
+      );
+    } finally {
+      setDeletingKind(null);
+    }
+  };
+
+  const saveContacts = async () => {
+    setIsSavingContacts(true);
+    try {
+      const response = await fetch('/api/admin/store-settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ socialLinks: contactDraft }),
+      });
+      const body = await response.json() as { settings?: StoreSettings; error?: string };
+      if (!response.ok || !body.settings) {
+        throw new Error(body.error ?? 'Kontak gagal disimpan.');
+      }
+      setSettings(body.settings);
+      try {
+        setContactDraft(parseSocialLinks(JSON.parse(body.settings.socialLinks || '[]')));
+      } catch {
+        setContactDraft([]);
+      }
+      await refreshStoreIdentity().catch(() => {});
+      addToast('Kontak tersimpan', 'Tautan sosial di footer sudah diperbarui.', 'success');
+    } catch (error) {
+      const code = error instanceof Error ? error.message : '';
+      addToast(
+        'Kontak gagal disimpan',
+        code === 'INVALID_SOCIAL_LINK_VALUE'
+          ? 'Ada nilai kontak yang tidak valid. Periksa nomor WhatsApp, email, atau URL sosial.'
+          : code || 'Silakan coba kembali.',
+        'error',
+      );
+    } finally {
+      setIsSavingContacts(false);
     }
   };
 
@@ -193,40 +310,61 @@ export default function StoreSettingsPanel({ view }: { view: StoreSettingsView }
         </CardHeader>
         <CardContent className="space-y-5">
           {isLoading ? (
-            <p className="text-sm text-slate-500">Memuat profil toko…</p>
+            <LoadingState message="Memuat profil toko…" />
           ) : (
             <>
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-                <div className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
-                  {settings.logoFile ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={`/api/store-assets/${encodeURIComponent(settings.logoFile)}`}
-                      alt={`Logo ${settings.storeName}`}
-                      className="h-full w-full object-contain p-2"
-                    />
-                  ) : (
-                    <span className="text-xs font-semibold text-slate-400">Belum ada logo</span>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="store-logo">Logo toko</Label>
-                  <Input
-                    id="store-logo"
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp"
-                    disabled={isUploading}
-                    onChange={(event) => {
-                      void uploadLogo(event.target.files?.[0]);
-                      event.currentTarget.value = '';
-                    }}
-                    className="max-w-sm"
-                  />
-                  <p className="text-xs text-slate-500">
-                    PNG, JPG, atau WebP. Maksimal 1 MB.
-                    {isUploading ? ' Mengunggah…' : ''}
-                  </p>
-                </div>
+              <div className="grid gap-4 sm:grid-cols-3">
+                {(Object.keys(assetMeta) as AssetKind[]).map((kind) => {
+                  const meta = assetMeta[kind];
+                  const filename = settings[meta.field];
+                  const busy = uploadingKind === kind || deletingKind === kind;
+                  return (
+                    <div key={kind} className="space-y-2">
+                      <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
+                        {filename ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={`/api/store-assets/${encodeURIComponent(filename)}`}
+                            alt={`${meta.title} ${settings.storeName}`}
+                            className={meta.previewClass}
+                          />
+                        ) : (
+                          <span className="px-2 text-center text-[10px] font-semibold text-slate-400">
+                            Belum ada
+                          </span>
+                        )}
+                      </div>
+                      <Label htmlFor={`store-asset-${kind}`}>{meta.title}</Label>
+                      <Input
+                        id={`store-asset-${kind}`}
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        disabled={busy}
+                        onChange={(event) => {
+                          void uploadAsset(kind, event.target.files?.[0]);
+                          event.currentTarget.value = '';
+                        }}
+                        className="max-w-sm"
+                      />
+                      <p className="text-[11px] text-slate-500">
+                        {meta.hint}
+                        {uploadingKind === kind ? ' Mengunggah…' : ''}
+                      </p>
+                      {filename && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void deleteAsset(kind)}
+                          disabled={busy}
+                        >
+                          <Trash2 className="mr-2 h-3.5 w-3.5" aria-hidden="true" />
+                          {deletingKind === kind ? 'Menghapus…' : 'Hapus'}
+                        </Button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">
@@ -256,7 +394,7 @@ export default function StoreSettingsPanel({ view }: { view: StoreSettingsView }
                     maxLength={2000}
                     value={settings.description}
                     onChange={(event) => updateSetting('description', event.target.value)}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -269,6 +407,123 @@ export default function StoreSettingsPanel({ view }: { view: StoreSettingsView }
                     onChange={(event) => updateSetting('supportPhone', event.target.value)}
                     placeholder="08xxxxxxxxxx"
                   />
+                  <p className="text-[11px] text-slate-500">
+                    Dipakai tombol bantuan di halaman pembayaran dan struk.
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-3 rounded-xl border border-slate-200 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-900">Kontak & media sosial</h3>
+                    <p className="text-[11px] text-slate-500">
+                      Tampil sebagai ikon di footer beranda. Boleh lebih dari satu per jenis,
+                      misalnya WhatsApp 1 dan WhatsApp 2.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setContactDraft((current) => [
+                        ...current,
+                        { type: 'whatsapp', label: '', value: '' },
+                      ])
+                    }
+                    disabled={contactDraft.length >= 20}
+                  >
+                    <Plus className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                    Tambah kontak
+                  </Button>
+                </div>
+
+                {contactDraft.length === 0 ? (
+                  <p className="rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center text-xs text-slate-500">
+                    Belum ada kontak. Nomor WhatsApp/bantuan di atas akan otomatis dipakai selama
+                    daftar ini kosong.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {contactDraft.map((contact, index) => (
+                      <div
+                        key={index}
+                        className="grid gap-2 sm:grid-cols-[9rem_minmax(0,9rem)_minmax(0,1fr)_auto]"
+                      >
+                        <select
+                          aria-label={`Jenis kontak ${index + 1}`}
+                          value={contact.type}
+                          onChange={(event) =>
+                            setContactDraft((current) =>
+                              current.map((item, itemIndex) =>
+                                itemIndex === index
+                                  ? { ...item, type: event.target.value as SocialLinkType }
+                                  : item,
+                              ),
+                            )
+                          }
+                          className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-sm"
+                        >
+                          {socialLinkTypes.map((type) => (
+                            <option key={type} value={type}>
+                              {socialLinkLabels[type]}
+                            </option>
+                          ))}
+                        </select>
+                        <Input
+                          aria-label={`Label kontak ${index + 1}`}
+                          value={contact.label}
+                          maxLength={40}
+                          placeholder={socialLinkLabels[contact.type]}
+                          onChange={(event) =>
+                            setContactDraft((current) =>
+                              current.map((item, itemIndex) =>
+                                itemIndex === index ? { ...item, label: event.target.value } : item,
+                              ),
+                            )
+                          }
+                        />
+                        <Input
+                          aria-label={`Nilai kontak ${index + 1}`}
+                          value={contact.value}
+                          maxLength={300}
+                          placeholder={socialLinkPlaceholders[contact.type]}
+                          onChange={(event) =>
+                            setContactDraft((current) =>
+                              current.map((item, itemIndex) =>
+                                itemIndex === index ? { ...item, value: event.target.value } : item,
+                              ),
+                            )
+                          }
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`Hapus kontak ${index + 1}`}
+                          onClick={() =>
+                            setContactDraft((current) =>
+                              current.filter((_, itemIndex) => itemIndex !== index),
+                            )
+                          }
+                        >
+                          <Trash2 className="h-4 w-4" aria-hidden="true" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void saveContacts()}
+                    disabled={isSavingContacts || isLoading}
+                  >
+                    {isSavingContacts ? 'Menyimpan…' : 'Simpan kontak'}
+                  </Button>
                 </div>
               </div>
               <div className="flex justify-end border-t border-slate-100 pt-4">
@@ -298,7 +553,7 @@ export default function StoreSettingsPanel({ view }: { view: StoreSettingsView }
         </CardHeader>
         <CardContent className="space-y-4">
           {isLoading ? (
-            <p className="text-sm text-slate-500">Memuat pengaturan SEO…</p>
+            <LoadingState message="Memuat pengaturan SEO…" />
           ) : (
             <>
               <div className="grid gap-4">
@@ -322,7 +577,7 @@ export default function StoreSettingsPanel({ view }: { view: StoreSettingsView }
                     value={settings.seoDescription}
                     onChange={(event) => updateSetting('seoDescription', event.target.value)}
                     placeholder={settings.description || 'Jelaskan layanan toko untuk hasil pencarian.'}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
                   />
                   <p className="text-xs text-slate-500">Disarankan sekitar 150–160 karakter.</p>
                 </div>

@@ -1,10 +1,9 @@
-import { readFile } from 'node:fs/promises';
-import { eq } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
+import { eq } from 'drizzle-orm';
 import { getAuth } from '@/lib/server/auth';
 import { getDatabase } from '@/lib/server/db/client';
 import { deposits } from '@/lib/server/db/schema';
-import { getImageMimeType, getUploadedImagePath } from '@/lib/server/uploaded-image';
+import { readUploadedImage } from '@/lib/server/uploaded-image';
 
 export const runtime = 'nodejs';
 
@@ -32,10 +31,11 @@ export async function GET(
     return NextResponse.json({ error: 'PROOF_NOT_FOUND' }, { status: 404 });
   }
   try {
-    const bytes = await readFile(getUploadedImagePath('deposit-proofs', deposit.proofUrl));
-    return new NextResponse(bytes, {
+    const image = await readUploadedImage('deposit-proofs', deposit.proofUrl);
+    if (!image) return NextResponse.json({ error: 'PROOF_NOT_FOUND' }, { status: 404 });
+    return new NextResponse(new Uint8Array(image.bytes), {
       headers: {
-        'Content-Type': getImageMimeType(deposit.proofUrl),
+        'Content-Type': image.mimeType,
         'Cache-Control': 'private, no-store',
         'X-Content-Type-Options': 'nosniff',
       },

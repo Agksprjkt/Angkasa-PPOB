@@ -11,6 +11,12 @@ export async function GET() {
     const description = settings.seoDescription.trim() ||
       settings.description.trim() ||
       'Platform PPOB untuk pulsa, paket data, token PLN, dan pembayaran tagihan.';
+    // A 192px upload also serves as the 512px slot when no dedicated icon exists;
+    // browsers scale, and it keeps a single upload usable for install.
+    const iconFile = settings.iconFile ?? settings.logoFile;
+    const iconUrl = iconFile
+      ? `/api/store-assets/${encodeURIComponent(iconFile)}`
+      : null;
 
     return NextResponse.json({
       name,
@@ -18,14 +24,19 @@ export async function GET() {
       description,
       start_url: '/',
       display: 'standalone',
-      background_color: '#0F2C59',
-      theme_color: '#0F2C59',
+      background_color: '#F8FAFC',
+      theme_color: '#F8FAFC',
       orientation: 'portrait-primary',
-      icons: [
-        { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
-        { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
-        { src: '/icons/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
-      ],
+      icons: iconUrl
+        ? [
+            { src: iconUrl, sizes: '192x192', type: 'image/png', purpose: 'any' },
+            { src: iconUrl, sizes: '512x512', type: 'image/png', purpose: 'any' },
+          ]
+        : [
+            { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
+            { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+            { src: '/icons/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
+          ],
       categories: ['finance', 'utilities', 'shopping'],
       shortcuts: [
         { name: 'Beli Pulsa', short_name: 'Pulsa', description: 'Isi pulsa reguler instan', url: '/?category=pulsa' },

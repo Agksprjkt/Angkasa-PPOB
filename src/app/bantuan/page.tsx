@@ -36,68 +36,77 @@ export default function HelpPage() {
   const supportUrl = supportDigits ? `https://wa.me/${supportDigits}` : null;
 
   return (
-    <main className="min-h-screen bg-[#f7f5fb] px-4 py-8 pb-28 sm:px-6 sm:py-12">
+    <div className="flex min-h-screen flex-col bg-white pb-[calc(4.75rem+env(safe-area-inset-bottom))]">
       <Header
+        activeTab="help"
         onOpenAuth={() => setIsAuthOpen(true)}
-        onOpenHistory={() => router.push('/?tab=history')}
         onOpenOrders={() => router.push('/cek-pesanan')}
-        onOpenLegal={() => router.push('/legal')}
+        onOpenDeposit={() => setIsDepositOpen(true)}
         mobileBack
+        backFallback="/"
       />
-      <div className="mx-auto max-w-xl">
-        <Link href="/" className="mb-5 hidden items-center gap-2 text-sm font-semibold text-slate-600 hover:text-violet-700 md:inline-flex">
-          <ArrowLeft className="h-4 w-4" />
-          Kembali ke katalog
-        </Link>
+      <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6 sm:py-8">
+        <div className="mx-auto max-w-xl">
+          <Link href="/" className="mb-5 hidden items-center gap-2 text-sm font-semibold text-slate-600 hover:text-sky-700 md:inline-flex">
+            <ArrowLeft className="h-4 w-4" />
+            Kembali ke katalog
+          </Link>
 
-        <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
-          <div className="flex items-center gap-3">
-            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet-100 text-violet-700">
-              <MessageCircleQuestion className="h-5 w-5" />
-            </span>
-            <div>
-              <h1 className="text-xl font-bold text-slate-900">Bantuan</h1>
-              <p className="text-sm text-slate-500">Perlu bantuan untuk pembayaran atau pesanan?</p>
+          <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
+            <div className="flex items-center gap-3">
+              <span className="flex h-11 w-11 items-center justify-center text-sky-700">
+                <MessageCircleQuestion className="h-6 w-6" />
+              </span>
+              <div>
+                <h1 className="text-xl font-bold text-slate-900">Bantuan</h1>
+                <p className="text-sm text-slate-500">Perlu bantuan untuk pembayaran atau pesanan?</p>
+              </div>
             </div>
-          </div>
-          <div className="mt-5 rounded-xl bg-slate-50 p-4 text-sm leading-relaxed text-slate-600">
-            Siapkan kode pesanan sebelum menghubungi admin agar status transaksi dapat diperiksa lebih cepat.
-            Kamu juga dapat membuka menu Cek Pesanan untuk melihat status terbaru.
-          </div>
-          {loadError ? (
-            <p role="alert" className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">
-              {loadError}
-            </p>
-          ) : supportUrl ? (
-            <a
-              href={supportUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-5 flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 text-sm font-semibold text-white transition hover:bg-emerald-700"
+            <div className="mt-5 rounded-xl bg-slate-50 p-4 text-sm leading-relaxed text-slate-600">
+              Siapkan kode pesanan sebelum menghubungi admin agar status transaksi dapat diperiksa lebih cepat.
+              Kamu juga dapat membuka menu Cek Pesanan untuk melihat status terbaru.
+            </div>
+            {loadError ? (
+              <p role="alert" className="mt-4 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                {loadError}
+              </p>
+            ) : supportUrl ? (
+              <a
+                href={supportUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-5 flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 text-sm font-semibold text-white transition hover:bg-emerald-700"
+              >
+                <MessageCircleQuestion className="h-4 w-4" />
+                Hubungi bantuan via WhatsApp
+              </a>
+            ) : (
+              <p className="mt-5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                Nomor WhatsApp bantuan belum diatur. Silakan cek status pesanan dari menu Cek Pesanan.
+              </p>
+            )}
+            <Link
+              href="/kontak"
+              className="mt-3 flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700 transition hover:border-sky-300 hover:text-sky-700"
             >
-              <MessageCircleQuestion className="h-4 w-4" />
-              Hubungi bantuan via WhatsApp
-            </a>
-          ) : (
-            <p className="mt-5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              Nomor WhatsApp bantuan belum diatur. Silakan cek status pesanan dari menu Cek Pesanan.
-            </p>
-          )}
-        </section>
-      </div>
+              Buka halaman kontak
+            </Link>
+          </section>
+        </div>
+      </main>
 
       <BottomNav
-        activeTab="legal"
+        activeTab="home"
         setActiveTab={() => {}}
+        className="lg:hidden"
         onOpenHome={() => router.push('/')}
-        onOpenHistory={() => router.push('/?tab=history')}
+        onOpenPromo={() => router.push('/promo')}
         onOpenOrders={() => router.push('/cek-pesanan')}
-        onOpenLegal={() => router.push('/legal')}
         onOpenAuth={() => setIsAuthOpen(true)}
         onOpenDeposit={() => setIsDepositOpen(true)}
       />
       <AuthModal open={isAuthOpen} onOpenChange={setIsAuthOpen} />
       <DepositModal open={isDepositOpen} onOpenChange={setIsDepositOpen} />
-    </main>
+    </div>
   );
 }

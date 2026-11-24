@@ -8,40 +8,17 @@ import { getDigiflazzConfig } from '@/lib/server/integration-settings';
 import { balanceLedger, products, transactions, users } from '@/lib/server/db/schema';
 import { applyBalanceDelta } from '@/lib/server/wallet';
 import { createOrderCode } from '@/lib/order-codes';
+import {
+  buildDigiflazzCustomerNo,
+  mapDigiflazzStatus,
+  readDigiflazzTransactionResponse,
+} from '@/lib/digiflazz-protocol';
 
 export const runtime = 'nodejs';
 
 type RetryHistory = NonNullable<
   NonNullable<typeof transactions.$inferSelect.vendorResponse>['retryHistory']
 >;
-
-function isProviderResponse(
-  value: unknown,
-): value is {
-  data: {
-    ref_id: string;
-    status: string;
-    message: string;
-    rc: string;
-    sn?: string;
-  };
-} {
-  if (typeof value !== 'object' || value === null || !('data' in value)) return false;
-  const data = value.data;
-  return (
-    typeof data === 'object' &&
-    data !== null &&
-    'ref_id' in data &&
-    typeof data.ref_id === 'string' &&
-    'status' in data &&
-    typeof data.status === 'string' &&
-    'message' in data &&
-    typeof data.message === 'string' &&
-    'rc' in data &&
-    typeof data.rc === 'string' &&
-    (!('sn' in data) || typeof data.sn === 'string')
-  );
-}
 
 function transactionResponse(
   response: NonNullable<typeof transactions.$inferSelect.vendorResponse>,
@@ -168,9 +145,7 @@ export async function POST(
     : null;
   const serverZoneId = original.serverZoneId ?? legacyGameDestination?.[2];
   const destination = legacyGameDestination?.[1] ?? original.destination;
-  const customerNo = serverZoneId
-    ? `${destination}.${serverZoneId}`
-    : original.destination;
+  const customerNo = buildDigiflazzCustomerNo(destination, serverZoneId).customerNo;
   const createRetryResponse = (
     code: string,
     message: string,
@@ -274,7 +249,8 @@ export async function POST(
       return NextResponse.json({ error: 'RETRY_OUTCOME_UNCLEAR' }, { status: 202 });
     }
 
-    if (!isProviderResponse(response) || response.data.ref_id !== referenceId) {
+    const provider = readDigiflazzTransactionResponse(response);
+    if (!provider || provider.refId !== referenceId) {
       history[history.length - 1] = {
         ...history[history.length - 1],
         code: 'RETRY_OUTCOME_UNCLEAR',
@@ -294,13 +270,7 @@ export async function POST(
       return NextResponse.json({ error: 'RETRY_OUTCOME_UNCLEAR' }, { status: 202 });
     }
 
-    const provider = response.data;
-    const providerStatus = provider.status.toLowerCase();
-    const status = providerStatus === 'sukses' && provider.rc === '00'
-      ? 'success'
-      : providerStatus === 'gagal'
-        ? 'failed'
-        : 'pending';
+    const status = mapDigiflazzStatus(provider.status, provider.rc);
     const vendorResponse = createRetryResponse(
       provider.rc,
       provider.message,

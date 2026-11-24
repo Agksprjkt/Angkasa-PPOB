@@ -5,6 +5,7 @@ import { getAuth } from '@/lib/server/auth';
 import { getDatabase } from '@/lib/server/db/client';
 import { storeSettings } from '@/lib/server/db/schema';
 import { getStoreSettings } from '@/lib/server/store-settings';
+import { normalizeSocialLinks, parseSocialLinks } from '@/lib/social-links';
 
 export const runtime = 'nodejs';
 
@@ -21,6 +22,8 @@ const textLimits = {
 
 const editableFields = Object.keys(textLimits);
 type EditableField = keyof typeof textLimits;
+
+const maxSocialLinks = 20;
 
 async function isAdmin(request: NextRequest) {
   const session = await getAuth().api.getSession({ headers: request.headers });
@@ -55,11 +58,13 @@ export async function PUT(request: NextRequest) {
   }
 
   const input = payload as Record<string, unknown>;
-  if (Object.keys(input).some((key) => !editableFields.includes(key))) {
+  const allowedKeys = [...editableFields, 'socialLinks'];
+  if (Object.keys(input).some((key) => !allowedKeys.includes(key))) {
     return NextResponse.json({ error: 'UNKNOWN_SETTING' }, { status: 400 });
   }
   const updates: Partial<Record<EditableField, string>> = {};
   for (const [field, rawValue] of Object.entries(input)) {
+    if (field === 'socialLinks') continue;
     if (typeof rawValue !== 'string' || rawValue.length > textLimits[field as EditableField]) {
       return NextResponse.json({ error: 'INVALID_SETTING_VALUE', field }, { status: 400 });
     }
@@ -72,11 +77,38 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: 'INVALID_SUPPORT_PHONE' }, { status: 400 });
   }
 
+  // Every contact row must resolve to a real link; one invalid row rejects the
+  // save so the footer can never contain a broken or off-site link.
+  let socialLinksJson: string | undefined;
+  if ('socialLinks' in input) {
+    const raw = input.socialLinks;
+    if (!Array.isArray(raw) || raw.length > maxSocialLinks) {
+      return NextResponse.json({ error: 'INVALID_SOCIAL_LINKS' }, { status: 400 });
+    }
+    const parsed = parseSocialLinks(raw);
+    if (parsed.length !== raw.length) {
+      return NextResponse.json({ error: 'INVALID_SOCIAL_LINKS' }, { status: 400 });
+    }
+    const normalized = normalizeSocialLinks(parsed);
+    if (normalized.length !== parsed.length) {
+      return NextResponse.json({ error: 'INVALID_SOCIAL_LINK_VALUE' }, { status: 400 });
+    }
+    socialLinksJson = JSON.stringify(normalized.map(({ type, label, value }) => ({
+      type,
+      label,
+      value,
+    })));
+  }
+
   try {
     await getStoreSettings();
     await getDatabase()
       .update(storeSettings)
-      .set({ ...updates, updatedAt: new Date() })
+      .set({
+        ...updates,
+        ...(socialLinksJson === undefined ? {} : { socialLinks: socialLinksJson }),
+        updatedAt: new Date(),
+      })
       .where(eq(storeSettings.id, 'default'));
     return NextResponse.json({ settings: await getStoreSettings() });
   } catch (error) {

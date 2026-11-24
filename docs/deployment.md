@@ -13,10 +13,124 @@
 
 The database mode is selected at process startup. A mode file, when configured,
 overrides `DATABASE_PROVIDER`; changing either setting does not copy data,
-create a backup, or safely switch a running deployment. **Database switching
-from the admin dashboard is not implemented. Do not edit the mode file on a
-live deployment to switch databases.** Keep payments disabled until a complete
-backup, restore, and cutover procedure has passed in staging.
+create a backup, or safely switch a running deployment. The admin Sistem tab can
+save a new mode, but it only takes effect after a restart and it never moves
+data. **Do not switch the database of a live deployment without a complete
+backup, restore, and cutover procedure rehearsed in staging.** Keep payments
+disabled until that procedure has passed.
+
+## Admin > Pengaturan > Sistem
+
+The dashboard stores its choices in `.data/system-config.json` (override the
+path with `SYSTEM_CONFIG_FILE`). It is a file rather than a database row on
+purpose: the database connection settings must be readable before a connection
+exists. Secrets inside it (database password, Redis password, S3 keys, Neon API
+key) are encrypted with `BETTER_AUTH_SECRET`, so rotating that secret requires
+re-entering them.
+
+Environment variables always win over the dashboard, exactly like the
+integration settings panel:
+
+| Dashboard card | Environment override |
+| --- | --- |
+| Database provider | `DATABASE_PROVIDER` |
+| Database URL | `DATABASE_URL` / `DATABASE_URL_FILE` |
+| Migration URL | `DATABASE_URL_DIRECT` / `DATABASE_URL_DIRECT_FILE` |
+| Startup migrations | `DATABASE_MIGRATE_ON_STARTUP` |
+| Redis | `REDIS_URL`, `REDIS_PASSWORD_FILE` |
+| Storage | none (dashboard only) |
+| Storefront | none (dashboard only) |
+
+- **Database** changes apply after a restart. Nothing is migrated between
+  SQLite and PostgreSQL; take a backup and run a cutover before switching a
+  deployment with data.
+- **Redis** is optional. When disabled or unreachable, rate limiting falls back
+  to the `order_lookup_rate_limits` table instead of allowing every request.
+- **Storage** switches between the local filesystem and an S3-compatible bucket
+  (AWS S3, Cloudflare R2, MinIO, Supabase). It takes effect on the next upload,
+  without a restart. Existing files are not copied, so keep the old backend
+  readable until the files have been moved. Local paths must stay inside the
+  project directory; absolute paths and `..` are rejected.
+- **Storefront** turns the built-in store on or off. When it is off,
+  `src/proxy.ts` redirects every public page to `/admin/login`. `/admin*`,
+  `/api/*`, `/_next/*`, and static assets stay reachable, so an external
+  frontend that consumes the API is unaffected. The change applies on the next
+  request; no restart is needed. Because the built-in store has no other login
+  screen, `/admin/login` is the only way back in — make sure an admin account
+  exists before switching it off.
+
+### Store profile and contacts
+
+`store_settings` holds three separate image slots plus the operational contacts:
+
+| Field | Used for |
+| --- | --- |
+| `logoFile` | Header brand mark |
+| `iconFile` | PWA manifest and `apple-touch-icon` |
+| `faviconFile` | Browser tab icon |
+| `socialLinks` | JSON array of `{ type, label, value }` shown in the home footer |
+| `supportPhone` | Legacy help number, still used by payment and receipt screens |
+
+Icons fall back down the chain `faviconFile → iconFile → logoFile → bundled
+default`, so uploading one file still improves every surface. The home footer
+renders only normalized links: WhatsApp becomes `wa.me`, email becomes
+`mailto:`, and social URLs must point at the real service domain, which prevents
+the footer from becoming an open redirect. When `socialLinks` is empty,
+`supportPhone` is promoted to a single WhatsApp entry so existing stores keep a
+working contact link.
+
+### Neon
+
+Two independent options, either can be used alone:
+
+1. **Preset** (no API key): forces `sslmode=require`, keeps startup migrations
+   off, and stores the pooled URL for runtime plus the direct URL for
+   migrations. Migrations then run through `npm run db:migrate` as a deploy step.
+2. **Neon API** (`NEON_API_KEY`): the dashboard can call
+   `GET /projects/{id}/connection_uri` to fill both URLs. The role password is
+   never sent to the browser; the server writes the URIs directly. With an
+   organization ID it also shows 30-day consumption from
+   `consumption_history/v2/projects`, falling back to the legacy
+   `consumption_history/projects` endpoint. A `403` is shown as "metrics are not
+   available for this plan" rather than an error.
+
+
+## Managed PostgreSQL (Neon)
+
+PostgreSQL can run on a managed provider such as Neon instead of the Compose
+`postgres` service. The application supports this without code changes, but
+three settings matter:
+
+1. **Use the pooled URL for the app and the direct URL for migrations.** Neon
+   exposes a PgBouncer endpoint (hostname contains `-pooler`) and a direct
+   endpoint. The app detects the `-pooler` hostname and disables prepared
+   statements automatically, because PgBouncer in transaction mode rejects
+   them. Set `DATABASE_URL` (or `DATABASE_URL_FILE`) to the pooled URL, and run
+   migrations with the direct URL by overriding `DATABASE_URL` for that one
+   command.
+2. **Keep TLS on.** Append `?sslmode=require` to the connection string. Neon
+   refuses unencrypted connections.
+3. **Do not migrate during startup on a managed database.** Set
+   `DATABASE_MIGRATE_ON_STARTUP=false` and run `npm run db:migrate` as an
+   explicit deploy step. Startup migrations race with `__drizzle_migrations`
+   when more than one instance starts at once, and Neon's scale-to-zero can
+   make the first connection exceed the app's startup window. The default is
+   `true`, which preserves the existing self-hosted behavior.
+
+Neon's free tier suspends an idle database after a few minutes. The first query
+after a suspend pays a cold-start penalty; the app's `connect_timeout` of 10
+seconds covers it. Connection limits are low on the free tier, so keep
+`postgres` pool `max` at 10 or lower (the app already uses 10).
+
+Neon is a good fit for **ephemeral per-PR branches and load testing**. It is not
+a substitute for a staging environment that matches production: if production
+runs the Compose `postgres` service, keep staging self-hosted too, because
+network hops, cold starts, pooling, and connection ceilings differ. If
+production moves to Neon, staging must move with it.
+
+Redis is still required by the Compose stack for rate limits and worker
+coordination. A managed Neon deployment needs its own Redis (or
+`REDIS_URL`) if you rely on those features.
 
 ## Docker Compose setup
 
@@ -69,6 +183,169 @@ backup, restore, and cutover procedure has passed in staging.
 8. Set `BOOTSTRAP_ADMIN_ENABLED=true` only for first-time setup, provide the
    bootstrap admin values, and turn it off immediately after the account is
    created.
+
+## Fresh VPS install, start to finish
+
+This is the exact sequence used to provision a new host. Every step is
+idempotent except the admin bootstrap, which must be switched off afterwards.
+
+### 1. Pre-flight (no changes)
+
+```sh
+uname -m                 # must be x86_64
+free -h; df -h /
+ss -lntp                 # confirm 22/80/443 are free
+docker --version 2>/dev/null || echo "docker not installed"
+```
+
+### 2. Docker Engine and Compose v2
+
+Install from Docker's official repository, not a `curl | sh` script, so package
+updates stay auditable:
+
+```sh
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/debian/gpg \
+  | sudo tee /etc/apt/keyrings/docker.asc >/dev/null
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable" \
+  | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$USER"    # re-login for this to take effect
+```
+
+Use `ubuntu` instead of `debian` in the repository URL on Ubuntu.
+
+### 3. Firewall
+
+```sh
+sudo ufw default deny incoming
+sudo ufw allow 22/tcp
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw allow 443/udp        # HTTP/3
+sudo ufw enable
+```
+
+Ports 3000, 5432, and 6379 must stay closed: Postgres and Redis live on the
+internal `ppob-private` network, and the app is bound to host loopback.
+
+### 4. Deployment directory and secrets
+
+```sh
+sudo mkdir -p /opt/ppob/secrets
+sudo chown "$USER":"$USER" /opt/ppob
+chmod 750 /opt/ppob
+chmod 700 /opt/ppob/secrets
+cd /opt/ppob
+```
+
+Copy `docker-compose.yml`, `Caddyfile`, and `.env.example` from the repository,
+then generate every secret on the server. Never reuse a value from a local
+`.env.local`: a shared `BETTER_AUTH_SECRET` makes local sessions invalid and
+leaves locally stored integration credentials undecryptable on the server.
+
+```sh
+umask 077
+openssl rand -hex 32 > secrets/postgres_password
+openssl rand -hex 32 > secrets/redis_password
+# The URL must carry the same password as postgres_password, percent-encoded.
+printf 'postgres://ppob:%s@postgres:5432/ppob\n' "$(cat secrets/postgres_password)" > secrets/database_url
+chmod 600 secrets/*
+```
+
+Generate `BETTER_AUTH_SECRET` and `PAYMENT_RECONCILER_SECRET` into `.env`:
+
+```sh
+openssl rand -base64 48 | tr -d '\n'; echo
+```
+
+`.env` must contain at least:
+
+```ini
+APP_IMAGE=ghcr.io/agksprjkt/angkasa-ppob:sha-<full-commit>
+BETTER_AUTH_URL=https://<domain>
+BETTER_AUTH_SECRET=<new random value>
+PAYMENT_RECONCILER_SECRET=<new random value, at least 32 bytes>
+PPOB_DOMAIN=<domain>
+PPOB_ACME_EMAIL=<your email>
+```
+
+### 5. Start
+
+```sh
+docker compose pull
+docker compose --profile tls up -d --no-build
+docker compose ps
+docker compose logs --tail=100 app payment-reconciler
+```
+
+The `tls` profile starts Caddy, which obtains a certificate automatically. DNS
+must already resolve to this host and ports 80/443 must be reachable, otherwise
+the certificate request fails and Caddy retries with backoff.
+
+### 6. Bootstrap the admin
+
+```sh
+# add to .env temporarily
+BOOTSTRAP_ADMIN_ENABLED=true
+BOOTSTRAP_ADMIN_PHONE=+6281234567890
+BOOTSTRAP_ADMIN_NAME=Store Administrator
+BOOTSTRAP_ADMIN_PASSWORD=<unique strong password>
+
+docker compose up -d app     # re-creates app with the new env
+docker compose logs app | grep -i bootstrap
+
+# then remove the four lines and restart, keeping the flag off
+docker compose up -d app
+```
+
+### 7. Verify
+
+```sh
+curl -I https://<domain>/                    # 200 + security headers
+curl -I https://<domain>/admin               # redirect to /admin/login
+curl -s https://<domain>/api/store-settings  # valid JSON
+docker compose exec postgres pg_isready      # accepting connections
+docker compose logs app | grep -i migration  # no failure
+ss -lntp | grep -E ':(3000|5432|6379)\b'     # must print nothing
+```
+
+A webhook endpoint with no configured secret answers `503`, and one with a
+secret but a bad signature answers `401`. A `500` means something else is wrong.
+
+### 8. Backups
+
+`scripts/vps-backup.sh` in the repository dumps Postgres and archives the
+`ppob-data` volume into `/opt/ppob/backups`, keeping the seven most recent
+copies. It resolves the real volume name through `docker compose config`, so it
+works regardless of the Compose project name. Install it once on the host:
+
+```sh
+sudo mkdir -p /opt/ppob/backups && sudo chown "$USER":"$USER" /opt/ppob/backups
+install -m 750 scripts/vps-backup.sh /opt/ppob/backup.sh
+( crontab -l 2>/dev/null; echo '0 3 * * * /opt/ppob/backup.sh >> /opt/ppob/backups/backup.log 2>&1' ) | crontab -
+```
+
+Run it once by hand and confirm the log ends with `backup finished` before
+trusting the schedule.
+
+Restore is rehearsed into a scratch directory, never straight over production:
+
+```sh
+cd /opt/ppob/backups
+tar -tzf ppob-<stamp>.tar.gz | head        # inspect before extracting
+mkdir -p /tmp/restore && tar -xzf ppob-<stamp>.tar.gz -C /tmp/restore
+docker compose exec -T postgres createdb -U ppob ppob_restore_check
+gunzip -c /tmp/restore/database.sql.gz | docker compose exec -T postgres psql -U ppob -d ppob_restore_check
+docker compose exec -T postgres dropdb -U ppob ppob_restore_check
+```
+
+The `data.tar.gz` member restores into the `ppob-data` volume; mount it with a
+throwaway container the same way the backup script does. A backup that has never
+been restored is not a backup.
 
 ## Manual updates without building on the VPS
 
@@ -146,6 +423,46 @@ separate terminal while the app is running. Provider errors are recorded in
 the Digiflazz settings and retried on the next selected interval; they do not
 silently replace the last successful catalog.
 
+## Digiflazz webhook
+
+`POST /api/digiflazz/webhook` receives realtime prepaid transaction updates.
+Configure it in the Digiflazz member panel under **Atur Koneksi > API >
+Webhook**, using the public URL of this app and a secret of at least 16 bytes
+that you also set as `DIGIFLAZZ_WEBHOOK_SECRET`. Digiflazz signs the raw request
+body with HMAC-SHA1 and sends `X-Hub-Signature: sha1=<hex>`; an unsigned or
+mismatched request gets `401`, and an empty secret makes the endpoint answer
+`503`.
+
+The handler acknowledges `ping` events without touching data. Each
+`X-Digiflazz-Event` + reference combination is stored in `webhook_events`, so a
+repeated delivery returns `{"replayed":true}` instead of crediting twice. A
+callback for an already-settled transaction, a postpaid/hotel callback, and a
+callback for a pending order older than 89 days are all acknowledged without
+acting: Digiflazz re-creates a transaction when a status check runs past 90 days,
+so those orders are parked for admin review instead.
+
+Status is never taken from the request body alone. When the signed payload
+carries a definitive `status`/`rc`, that value is applied through a
+compare-and-set on `status = 'pending'`, so the webhook and the one-minute
+reconciler cannot both refund the same order. Failed transactions are refunded
+with the idempotency key `refund:<referenceId>`.
+
+## Qrisly payment webhook
+
+`POST /api/payment-gateway/callback` lets Qrisly notify the app instead of
+waiting for the one-minute reconciler. Configure the provider to send the shared
+secret in the `x-webhook-secret` header and set the same value as
+`QRISLY_WEBHOOK_SECRET` (at least 32 bytes). When the variable is empty the
+endpoint answers `503` and the reconciler stays the only payment trigger.
+
+The payload is treated as a hint only: the handler looks up the invoice or
+deposit by `history_id`, then re-reads the payment status and amount from Qrisly
+with our own API key. A forged body therefore cannot mark anything paid. Each
+`event_id` is stored in `webhook_events` (unique on provider + event id), so a
+replayed delivery returns `{"replayed":true}` without reprocessing. Failures
+leave the event unprocessed and return `503`, so a provider retry can finish the
+reconciliation.
+
 The app is published only on host loopback port 3000. Put a TLS-terminating
 reverse proxy in front of it and expose only HTTPS to users. PostgreSQL and
 Redis have no published host ports and use the private Compose network. Do not
@@ -167,6 +484,10 @@ contains the selected-mode configuration and local uploads/assets (including
 legacy deposit receipts). Keep encrypted copies off the host and periodically
 test a restore into an isolated staging deployment. A database-only backup is
 not sufficient to restore the complete application.
+
+For moving the deployment to another VPS, follow the dedicated
+[VPS migration guide](./vps-migration.md). It covers a consistent final
+snapshot, restoring PostgreSQL and `ppob-data`, DNS cutover, and rollback.
 
 Before deploying schema changes, retain a verified database backup. PostgreSQL
 backups should be made with `pg_dump` in custom format and restored with

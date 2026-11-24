@@ -1,11 +1,12 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { usePPOB } from '@/context/PPOBContext';
-import { ClipboardCheck, FileText, Home, History, Plus } from 'lucide-react';
+import { ClipboardCheck, Home, Megaphone, Plus, UserRound } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { footerVisibilityEvent } from '@/components/StoreFooter';
 
-type ActiveTab = 'home' | 'history' | 'orders' | 'legal';
+type ActiveTab = 'home' | 'promo' | 'orders' | 'account';
 
 interface BottomNavProps {
   activeTab: ActiveTab;
@@ -13,10 +14,11 @@ interface BottomNavProps {
   onOpenDeposit: () => void;
   onOpenAuth: () => void;
   onOpenHome?: () => void;
-  onOpenHistory?: () => void;
+  onOpenPromo?: () => void;
   onOpenOrders?: () => void;
-  onOpenLegal?: () => void;
+  onOpenAccount?: () => void;
   className?: string;
+  dark?: boolean;
 }
 
 export default function BottomNav({
@@ -25,29 +27,44 @@ export default function BottomNav({
   onOpenDeposit,
   onOpenAuth,
   onOpenHome,
-  onOpenHistory,
+  onOpenPromo,
   onOpenOrders,
-  onOpenLegal,
+  onOpenAccount,
   className,
+  dark = false,
 }: BottomNavProps) {
   const { isGuest, authPending } = usePPOB();
+  // The footer announces when it scrolls into view; the nav then slides out of the
+  // way so it never covers the footer links, and slides back when it leaves.
+  const [footerVisible, setFooterVisible] = useState(false);
 
-  const iconButtonClass = (isActive: boolean) =>
-    `flex min-w-0 flex-col items-center justify-center gap-1 rounded-xl px-1 py-1.5 text-[10px] font-medium leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-600 sm:text-[11px] ${
-      isActive
-        ? 'bg-blue-50 text-blue-700'
-        : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
-    }`;
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<boolean>).detail;
+      setFooterVisible(detail === true);
+    };
+    window.addEventListener(footerVisibilityEvent, handler);
+    return () => window.removeEventListener(footerVisibilityEvent, handler);
+  }, []);
+
+  const itemClass = 'liquid-glass-nav-item flex h-full min-w-0 flex-col items-center justify-center gap-1 px-1 text-[10px] font-medium leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 sm:text-[11px]';
 
   return (
     <nav
       aria-label="Navigasi utama"
+      aria-hidden={footerVisible || undefined}
+      inert={footerVisible || undefined}
       className={cn(
-        'fixed inset-x-3 bottom-[calc(0.5rem+env(safe-area-inset-bottom))] z-40 mx-auto max-w-xl rounded-2xl border border-slate-200/90 bg-white/95 p-1.5 shadow-[0_8px_30px_-12px_rgba(15,23,42,0.3)] backdrop-blur-xl sm:inset-x-5 sm:bottom-[calc(1rem+env(safe-area-inset-bottom))] sm:p-2',
+        // Docked flush on mobile; still floating from sm: upwards.
+        'liquid-glass-nav fixed inset-x-0 bottom-0 z-40 mx-auto w-full max-w-none transition-[transform,opacity] duration-300 sm:inset-x-6 sm:bottom-[calc(1.25rem+env(safe-area-inset-bottom))] sm:max-w-xl',
+        footerVisible
+          ? 'pointer-events-none translate-y-[130%] opacity-0'
+          : 'translate-y-0 opacity-100',
+        dark ? 'liquid-glass-nav-dark' : '',
         className,
       )}
     >
-      <div className="grid h-[3.75rem] w-full grid-cols-5 items-center gap-1 sm:h-16 sm:gap-2">
+      <div className="grid h-[3.75rem] w-full grid-cols-5 items-center gap-0.5 sm:h-16 sm:gap-1">
         <button
           type="button"
           aria-current={activeTab === 'home' ? 'page' : undefined}
@@ -57,25 +74,25 @@ export default function BottomNav({
             setActiveTab('home');
             onOpenHome?.();
           }}
-          className={iconButtonClass(activeTab === 'home')}
+          className={itemClass}
         >
-          <Home className="h-[18px] w-[18px]" aria-hidden="true" />
+          <Home className="h-[19px] w-[19px]" aria-hidden="true" />
           <span>Beranda</span>
         </button>
 
         <button
           type="button"
-          aria-current={activeTab === 'history' ? 'page' : undefined}
-          aria-label="Riwayat transaksi"
-          title="Riwayat transaksi"
+          aria-current={activeTab === 'promo' ? 'page' : undefined}
+          aria-label="Promo"
+          title="Promo"
           onClick={() => {
-            setActiveTab('history');
-            onOpenHistory?.();
+            setActiveTab('promo');
+            onOpenPromo?.();
           }}
-          className={iconButtonClass(activeTab === 'history')}
+          className={itemClass}
         >
-          <History className="h-[18px] w-[18px]" aria-hidden="true" />
-          <span>Riwayat</span>
+          <Megaphone className="h-[19px] w-[19px]" aria-hidden="true" />
+          <span>Promo</span>
         </button>
 
         <button
@@ -83,10 +100,10 @@ export default function BottomNav({
           aria-label={isGuest || authPending ? 'Masuk untuk top up' : 'Top up saldo'}
           title={isGuest || authPending ? 'Masuk untuk top up' : 'Top up saldo'}
           onClick={isGuest || authPending ? onOpenAuth : onOpenDeposit}
-          className="mx-auto flex h-11 min-w-0 flex-col items-center justify-center gap-1 rounded-xl bg-blue-700 px-2 text-white shadow-sm transition hover:bg-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 sm:h-12 sm:min-w-20 sm:flex-row sm:gap-1.5 sm:px-3"
+          className={cn(itemClass, 'liquid-glass-nav-accent mx-auto h-11 w-11 justify-center sm:h-12 sm:w-12')}
         >
-          <Plus className="h-[18px] w-[18px]" aria-hidden="true" />
-          <span className="text-[10px] font-semibold leading-none sm:text-[11px]">
+          <Plus className="h-[19px] w-[19px]" aria-hidden="true" />
+          <span className="text-[9px] font-semibold leading-none sm:text-[10px]">
             {isGuest || authPending ? 'Masuk' : 'Isi saldo'}
           </span>
         </button>
@@ -96,23 +113,29 @@ export default function BottomNav({
           aria-current={activeTab === 'orders' ? 'page' : undefined}
           aria-label="Cek pesanan"
           title="Cek pesanan"
-          onClick={onOpenOrders}
-          className={iconButtonClass(activeTab === 'orders')}
+          onClick={() => onOpenOrders?.()}
+          className={itemClass}
         >
-          <ClipboardCheck className="h-[18px] w-[18px]" aria-hidden="true" />
+          <ClipboardCheck className="h-[19px] w-[19px]" aria-hidden="true" />
           <span>Pesanan</span>
         </button>
 
         <button
           type="button"
-          aria-current={activeTab === 'legal' ? 'page' : undefined}
-          aria-label="Dokumen legal"
-          title="Dokumen legal"
-          onClick={onOpenLegal}
-          className={iconButtonClass(activeTab === 'legal')}
+          aria-current={activeTab === 'account' ? 'page' : undefined}
+          aria-label={isGuest ? 'Masuk ke akun' : 'Akun saya'}
+          title={isGuest ? 'Masuk ke akun' : 'Akun saya'}
+          onClick={() => {
+            if (isGuest || authPending) {
+              onOpenAuth();
+              return;
+            }
+            onOpenAccount?.();
+          }}
+          className={itemClass}
         >
-          <FileText className="h-[18px] w-[18px]" aria-hidden="true" />
-          <span>Legal</span>
+          <UserRound className="h-[19px] w-[19px]" aria-hidden="true" />
+          <span>Akun</span>
         </button>
       </div>
     </nav>

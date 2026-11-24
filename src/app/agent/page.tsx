@@ -1,8 +1,8 @@
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { Boxes, LayoutDashboard, Store } from 'lucide-react';
 import AgentDashboard from '@/components/AgentDashboard';
 import DashboardWorkspace from '@/components/DashboardWorkspace';
+import { agentDashboardNavigation } from '@/lib/agent-dashboard-navigation';
 import { getAuth } from '@/lib/server/auth';
 
 export const runtime = 'nodejs';
@@ -21,11 +21,7 @@ export default async function AgentPage() {
     <DashboardWorkspace
       label="Portal Member"
       userName={session.user.name}
-      navigation={[
-        { label: 'Ringkasan', href: '#agent-overview', icon: LayoutDashboard },
-        { label: 'Konter & struk', href: '#agent-counter', icon: Store },
-        { label: 'Katalog member', href: '#agent-catalog', icon: Boxes },
-      ]}
+      navigation={agentDashboardNavigation}
     >
       <AgentDashboard />
     </DashboardWorkspace>

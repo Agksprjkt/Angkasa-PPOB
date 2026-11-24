@@ -28,6 +28,7 @@ function isProduct(value: unknown): value is Omit<Product, 'id'> {
     'name',
     'category',
     'operator',
+    'variant',
     'description',
     'basePrice',
     'sellPriceUser',
@@ -48,6 +49,9 @@ function isProduct(value: unknown): value is Omit<Product, 'id'> {
     categories.includes(product.category as ProductCategory) &&
     typeof product.operator === 'string' &&
     product.operator.trim().length > 0 &&
+    (product.variant === undefined ||
+      product.variant === null ||
+      (typeof product.variant === 'string' && product.variant.trim().length <= 60)) &&
     typeof product.description === 'string' &&
     Number.isSafeInteger(product.basePrice) &&
     Number.isSafeInteger(product.sellPriceUser) &&
@@ -159,6 +163,7 @@ export async function PATCH(request: NextRequest) {
       'name',
       'category',
       'operator',
+      'variant',
       'description',
       'basePrice',
       'sellPriceUser',
@@ -172,6 +177,7 @@ export async function PATCH(request: NextRequest) {
       name: existing.name,
       category: existing.category,
       operator: existing.operator,
+      variant: existing.variant,
       description: existing.description,
       basePrice: existing.basePrice,
       sellPriceUser: existing.sellPriceUser,
@@ -188,9 +194,22 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: 'INVALID_PRODUCT_UPDATE' }, { status: 400 });
     }
 
+    // An admin-set type must survive every future Digiflazz sync, so record the
+    // manual source. An explicit null hands the type back to the sync.
+    const variantUpdate = 'variant' in updates
+      ? {
+          variant: typeof updates.variant === 'string' && updates.variant.trim()
+            ? updates.variant.trim()
+            : null,
+          variantSource: typeof updates.variant === 'string' && updates.variant.trim()
+            ? 'manual' as const
+            : 'sync' as const,
+        }
+      : {};
+
     const [product] = await db
       .update(products)
-      .set({ ...updates, updatedAt: new Date() })
+      .set({ ...updates, ...variantUpdate, updatedAt: new Date() })
       .where(eq(products.id, payload.id))
       .returning();
     if (!product) {

@@ -1,8 +1,7 @@
 'use client';
 
-import Image from 'next/image';
 import React, { useEffect, useState } from 'react';
-import { LockKeyhole, ShieldCheck, UserRound } from 'lucide-react';
+import { LockKeyhole, ShieldCheck } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -13,7 +12,9 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
+import StoreLogo from '@/components/StoreLogo';
 import { authClient } from '@/lib/auth-client';
 
 interface AuthModalProps {
@@ -57,8 +58,6 @@ async function setNewPassword(password: string) {
 
 export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
   const [storeName, setStoreName] = useState('');
-  const [storeLogoUrl, setStoreLogoUrl] = useState<string | null>(null);
-  const [storeLogoFailed, setStoreLogoFailed] = useState(false);
   const [storeIdentityError, setStoreIdentityError] = useState('');
   const [activeTab, setActiveTab] = useState<AuthTab>('login');
   const [loginPhone, setLoginPhone] = useState('');
@@ -97,12 +96,6 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
           throw new Error('Identitas aplikasi tidak dapat dimuat.');
         }
         setStoreName(result.storeName.trim());
-        setStoreLogoUrl(
-          'logoUrl' in result && typeof result.logoUrl === 'string'
-            ? result.logoUrl
-            : null,
-        );
-        setStoreLogoFailed(false);
         setStoreIdentityError('');
       })
       .catch((error: unknown) => {
@@ -278,58 +271,39 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
     onOpenChange(nextOpen);
   };
 
+
   return (
     <Dialog open={open} onOpenChange={handleOpenChange} wide>
       <DialogContent
         onClose={() => handleOpenChange(false)}
-        className="max-h-[90vh] max-w-4xl overflow-hidden border-0 bg-white p-0 shadow-2xl sm:rounded-2xl"
+        className="max-h-[92vh] max-w-4xl overflow-hidden border-0 bg-white p-0 shadow-2xl sm:rounded-2xl"
       >
-        <div className="grid max-h-[90vh] overflow-y-auto md:grid-cols-[0.9fr_1.1fr]">
-          <aside className="relative hidden min-h-[610px] flex-col justify-between overflow-hidden bg-slate-950 p-8 text-white md:flex lg:p-10">
+        <div className="grid max-h-[92vh] overflow-y-auto md:grid-cols-[0.85fr_1.15fr]">
+          <aside className="relative hidden flex-col justify-between overflow-hidden bg-slate-950 p-8 text-white md:flex lg:p-10">
             <div
               aria-hidden="true"
-              className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-blue-600/30 via-slate-950 to-slate-950"
+              className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-blue-600/35 via-slate-950 to-slate-950"
             />
-            <div aria-hidden="true" className="absolute -bottom-28 -left-20 h-80 w-80 rounded-full border border-white/10" />
-            <div aria-hidden="true" className="absolute -bottom-16 -left-8 h-56 w-56 rounded-full border border-white/10" />
-            <div className="relative z-10 flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-xl border border-white/15 bg-white/10">
-                {storeLogoUrl && !storeLogoFailed ? (
-                  <Image
-                    src={storeLogoUrl}
-                    alt=""
-                    width={44}
-                    height={44}
-                    unoptimized
-                    className="h-full w-full object-contain"
-                    onError={() => setStoreLogoFailed(true)}
-                  />
-                ) : storeName ? (
-                  <span className="text-sm font-bold">{storeName.slice(0, 2).toLocaleUpperCase('id-ID')}</span>
-                ) : (
-                  <UserRound className="h-5 w-5 text-white/80" aria-hidden="true" />
-                )}
-              </div>
-              <div className="min-w-0">
-                <p className="truncate text-sm font-semibold">{storeName || 'Akun pelanggan'}</p>
-                <p className="text-xs text-slate-300">Akses akun Anda</p>
-              </div>
-            </div>
+            <div aria-hidden="true" className="absolute -bottom-32 -left-24 h-80 w-80 rounded-full border border-white/10" />
+            <div aria-hidden="true" className="absolute -bottom-16 -left-6 h-56 w-56 rounded-full border border-white/10" />
 
-            <div className="relative z-10 space-y-5">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/15 bg-white/10">
-                <ShieldCheck className="h-6 w-6 text-blue-200" aria-hidden="true" />
+            <StoreLogo
+              imageClassName="relative z-10 max-h-12 max-w-48"
+              textClassName="relative z-10 max-w-48 truncate text-lg font-semibold text-white"
+            />
+
+            <div className="relative z-10 space-y-4">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/15 bg-white/10">
+                <ShieldCheck className="h-5 w-5 text-blue-200" aria-hidden="true" />
               </div>
-              <div className="space-y-3">
-                <p className="text-3xl font-semibold leading-tight tracking-tight lg:text-4xl">
-                  {activeTab === 'register' && !otpSent
-                    ? 'Mulai langkah baru Anda.'
-                    : 'Senang bertemu kembali.'}
-                </p>
-                <p className="max-w-sm text-sm leading-6 text-slate-300">
-                  Nikmati belanja produk digital yang praktis, gunakan saldo akun, dan pantau pesanan Anda.
-                </p>
-              </div>
+              <p className="text-2xl font-semibold leading-tight tracking-tight lg:text-3xl">
+                {activeTab === 'register' && !otpSent
+                  ? 'Mulai langkah baru Anda.'
+                  : 'Senang bertemu kembali.'}
+              </p>
+              <p className="max-w-sm text-sm leading-6 text-slate-300">
+                Belanja produk digital, bayar dengan saldo, dan pantau pesanan dalam satu akun.
+              </p>
             </div>
 
             <div className="relative z-10 flex items-center gap-2 text-xs text-slate-300">
@@ -338,31 +312,15 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
             </div>
           </aside>
 
-          <section className="min-w-0 p-5 sm:p-8 lg:p-10">
-            <div className="mb-7 flex items-center gap-3 md:hidden">
-              <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
-                {storeLogoUrl && !storeLogoFailed ? (
-                  <Image
-                    src={storeLogoUrl}
-                    alt=""
-                    width={40}
-                    height={40}
-                    unoptimized
-                    className="h-full w-full object-contain"
-                    onError={() => setStoreLogoFailed(true)}
-                  />
-                ) : storeName ? (
-                  <span className="text-sm font-bold text-slate-800">{storeName.slice(0, 2).toLocaleUpperCase('id-ID')}</span>
-                ) : (
-                  <UserRound className="h-5 w-5 text-slate-500" aria-hidden="true" />
-                )}
-              </div>
-              <p className="truncate text-sm font-semibold text-slate-900">
-                {storeName || 'Akun pelanggan'}
-              </p>
+          <section className="min-w-0 p-5 sm:p-8 lg:p-9">
+            <div className="mb-6 md:hidden">
+              <StoreLogo
+                imageClassName="max-h-9 max-w-40"
+                textClassName="max-w-40 truncate text-base font-semibold text-slate-900"
+              />
             </div>
 
-            <DialogHeader className="mb-6 border-0 p-0">
+            <DialogHeader className="mb-5 border-0 p-0">
               <DialogTitle className="text-2xl tracking-tight">
                 {resetMode
                   ? 'Pulihkan kata sandi'
@@ -370,7 +328,7 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
                     ? 'Buat akun baru'
                     : 'Masuk ke akun'}
               </DialogTitle>
-              <DialogDescription className="text-sm">
+              <DialogDescription className="mt-1 text-sm text-slate-600">
                 {resetMode
                   ? 'Atur ulang akses akun menggunakan nomor WhatsApp.'
                   : activeTab === 'register'
@@ -380,262 +338,259 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
                       : 'Masuk menggunakan nomor WhatsApp dan kata sandi Anda.'}
               </DialogDescription>
             </DialogHeader>
+
             {storeIdentityError && (
-              <p className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800" role="status">
+              <p className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800" role="status">
                 Nama dan logo aplikasi belum dapat dimuat. Anda tetap bisa masuk atau mendaftar.
               </p>
             )}
 
             <Tabs value={activeTab} onValueChange={handleTabChange}>
-              <TabsList className="mb-5 grid h-11 w-full grid-cols-2 rounded-lg bg-slate-100 p-1">
-                <TabsTrigger value="login" className="h-9 text-sm">Masuk</TabsTrigger>
-                <TabsTrigger value="register" className="h-9 text-sm">Daftar</TabsTrigger>
+              <TabsList className="mb-5 grid h-11 w-full grid-cols-2 rounded-xl bg-slate-100 p-1">
+                <TabsTrigger value="login" className="h-9 text-sm font-semibold">Masuk</TabsTrigger>
+                <TabsTrigger value="register" className="h-9 text-sm font-semibold">Daftar</TabsTrigger>
               </TabsList>
 
-          <TabsContent value="login">
-            {resetMode ? (
-              <div className="space-y-3.5">
-                {!resetOtpSent ? (
-                  <>
-                    <p className="text-sm text-slate-600">
-                      Kami akan mengirim kode pemulihan ke nomor WhatsApp akun Anda.
-                    </p>
+              <TabsContent value="login">
+                {resetMode ? (
+                  <div className="space-y-4">
+                    {!resetOtpSent ? (
+                      <>
+                        <p className="text-sm text-slate-600">
+                          Kami akan mengirim kode pemulihan ke nomor WhatsApp akun Anda.
+                        </p>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="reset-phone">Nomor WhatsApp</Label>
+                          <Input
+                            id="reset-phone"
+                            type="tel"
+                            autoComplete="tel"
+                            placeholder="08xxxxxxxxxx"
+                            required
+                            value={loginPhone}
+                            onChange={(event) => setLoginPhone(event.target.value)}
+                          />
+                        </div>
+                        {errorMessage && (
+                          <p role="alert" className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                            {errorMessage}
+                          </p>
+                        )}
+                        <Button
+                          type="button"
+                          disabled={isLoading || !loginPhone}
+                          className="h-11 w-full rounded-xl"
+                          onClick={() => void handleRequestPasswordReset()}
+                        >
+                          {isLoading ? 'Mengirim kode…' : 'Kirim kode reset'}
+                        </Button>
+                      </>
+                    ) : (
+                      <form onSubmit={handlePasswordReset} className="space-y-4">
+                        <div className="space-y-1.5">
+                          <Label htmlFor="reset-code">Kode reset</Label>
+                          <Input
+                            id="reset-code"
+                            inputMode="numeric"
+                            autoComplete="one-time-code"
+                            pattern="[0-9]{6}"
+                            maxLength={6}
+                            required
+                            value={resetCode}
+                            onChange={(event) =>
+                              setResetCode(event.target.value.replace(/\D/g, ''))
+                            }
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label htmlFor="reset-password">Kata sandi baru</Label>
+                          <PasswordInput
+                            id="reset-password"
+                            autoComplete="new-password"
+                            minLength={8}
+                            required
+                            value={resetPassword}
+                            onChange={(event) => setResetPassword(event.target.value)}
+                          />
+                        </div>
+                        {errorMessage && (
+                          <p role="alert" className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                            {errorMessage}
+                          </p>
+                        )}
+                        <Button type="submit" disabled={isLoading} className="h-11 w-full rounded-xl">
+                          {isLoading ? 'Menyimpan…' : 'Atur kata sandi baru'}
+                        </Button>
+                      </form>
+                    )}
+                    <button
+                      type="button"
+                      className="w-full text-sm font-medium text-slate-600 hover:text-slate-900"
+                      onClick={() => {
+                        setResetMode(false);
+                        setResetOtpSent(false);
+                        setErrorMessage('');
+                      }}
+                    >
+                      Kembali ke halaman masuk
+                    </button>
+                  </div>
+                ) : (
+                  <form onSubmit={handleLoginSubmit} className="space-y-4">
                     <div className="space-y-1.5">
-                      <Label htmlFor="reset-phone">Nomor WhatsApp</Label>
+                      <Label htmlFor="login-phone">Nomor WhatsApp</Label>
                       <Input
-                        id="reset-phone"
+                        id="login-phone"
                         type="tel"
                         autoComplete="tel"
+                        placeholder="08xxxxxxxxxx"
                         required
                         value={loginPhone}
                         onChange={(event) => setLoginPhone(event.target.value)}
                       />
                     </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="login-password">Kata sandi</Label>
+                      <PasswordInput
+                        id="login-password"
+                        autoComplete="current-password"
+                        required
+                        value={loginPassword}
+                        onChange={(event) => setLoginPassword(event.target.value)}
+                      />
+                    </div>
                     {errorMessage && (
-                      <p role="alert" className="text-sm text-red-600">
+                      <p role="alert" className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">
                         {errorMessage}
                       </p>
                     )}
-                    <Button
-                      type="button"
-                      disabled={isLoading || !loginPhone}
-                      className="w-full"
-                      onClick={() => void handleRequestPasswordReset()}
-                    >
-                      {isLoading ? 'Mengirim kode…' : 'Kirim kode reset'}
+                    <Button type="submit" disabled={isLoading} className="h-11 w-full rounded-xl">
+                      {isLoading ? 'Memverifikasi…' : 'Masuk'}
                     </Button>
-                  </>
-                ) : (
-                  <form onSubmit={handlePasswordReset} className="space-y-3.5">
+                    <button
+                      type="button"
+                      className="w-full text-sm font-medium text-slate-600 hover:text-slate-900"
+                      onClick={() => {
+                        setResetMode(true);
+                        setErrorMessage('');
+                      }}
+                    >
+                      Lupa kata sandi?
+                    </button>
+                  </form>
+                )}
+              </TabsContent>
+
+              <TabsContent value="register">
+                {!otpSent ? (
+                  <form onSubmit={handleSendOtp} className="space-y-4">
                     <div className="space-y-1.5">
-                      <Label htmlFor="reset-code">Kode reset</Label>
+                      <Label htmlFor="reg-name">Nama lengkap</Label>
                       <Input
-                        id="reset-code"
+                        id="reg-name"
+                        autoComplete="name"
+                        required
+                        maxLength={100}
+                        value={regName}
+                        onChange={(event) => setRegName(event.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="reg-phone">Nomor WhatsApp</Label>
+                      <Input
+                        id="reg-phone"
+                        type="tel"
+                        autoComplete="tel"
+                        placeholder="08xxxxxxxxxx"
+                        required
+                        value={regPhone}
+                        onChange={(event) => setRegPhone(event.target.value)}
+                      />
+                      <p className="text-xs text-slate-500">
+                        Kami akan mengirim kode verifikasi ke nomor ini.
+                      </p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="reg-password">Kata sandi</Label>
+                      <PasswordInput
+                        id="reg-password"
+                        autoComplete="new-password"
+                        minLength={8}
+                        required
+                        value={regPassword}
+                        onChange={(event) => setRegPassword(event.target.value)}
+                      />
+                      <p className="text-xs text-slate-500">Minimal 8 karakter.</p>
+                    </div>
+                    <p className="rounded-xl bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-500">
+                      Akun baru terdaftar sebagai pelanggan. Akses member ditetapkan setelah persetujuan admin.
+                    </p>
+                    {errorMessage && (
+                      <p role="alert" className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                        {errorMessage}
+                      </p>
+                    )}
+                    <Button type="submit" disabled={isLoading} className="h-11 w-full rounded-xl">
+                      {isLoading ? 'Mengirim kode…' : 'Kirim kode verifikasi'}
+                    </Button>
+                  </form>
+                ) : otpVerified ? (
+                  <form onSubmit={handleFinishRegistration} className="space-y-4">
+                    <p className="text-sm text-slate-600">
+                      Nomor WhatsApp berhasil diverifikasi. Selesaikan pembuatan akun untuk mulai menggunakan {storeName || 'layanan ini'}.
+                    </p>
+                    {errorMessage && (
+                      <p role="alert" className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                        {errorMessage}
+                      </p>
+                    )}
+                    <Button type="submit" disabled={isLoading} className="h-11 w-full rounded-xl">
+                      {isLoading ? 'Menyimpan akun…' : 'Selesaikan pembuatan akun'}
+                    </Button>
+                  </form>
+                ) : (
+                  <form onSubmit={handleVerifyOtp} className="space-y-4">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="verification-code">Kode verifikasi</Label>
+                      <Input
+                        id="verification-code"
                         inputMode="numeric"
                         autoComplete="one-time-code"
                         pattern="[0-9]{6}"
                         maxLength={6}
                         required
-                        value={resetCode}
+                        value={verificationCode}
                         onChange={(event) =>
-                          setResetCode(event.target.value.replace(/\D/g, ''))
+                          setVerificationCode(event.target.value.replace(/\D/g, ''))
                         }
                       />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="reset-password">Kata sandi baru</Label>
-                      <Input
-                        id="reset-password"
-                        type="password"
-                        autoComplete="new-password"
-                        minLength={8}
-                        required
-                        value={resetPassword}
-                        onChange={(event) => setResetPassword(event.target.value)}
-                      />
+                      <p className="text-xs text-slate-500">
+                        Masukkan kode 6 digit yang dikirim ke {verifiedPhone}.
+                      </p>
                     </div>
                     {errorMessage && (
-                      <p role="alert" className="text-sm text-red-600">
+                      <p role="alert" className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700">
                         {errorMessage}
                       </p>
                     )}
-                    <Button type="submit" disabled={isLoading} className="w-full">
-                      {isLoading ? 'Menyimpan…' : 'Atur kata sandi baru'}
+                    <Button type="submit" disabled={isLoading} className="h-11 w-full rounded-xl">
+                      {isLoading ? 'Memverifikasi…' : 'Verifikasi & buat akun'}
                     </Button>
+                    <button
+                      type="button"
+                      className="w-full text-sm font-medium text-slate-600 hover:text-slate-900"
+                      onClick={() => {
+                        setOtpSent(false);
+                        setOtpVerified(false);
+                        setVerificationCode('');
+                        setErrorMessage('');
+                      }}
+                    >
+                      Ganti nomor WhatsApp
+                    </button>
                   </form>
                 )}
-                <button
-                  type="button"
-                  className="w-full text-sm text-slate-600 underline"
-                  onClick={() => {
-                    setResetMode(false);
-                    setResetOtpSent(false);
-                    setErrorMessage('');
-                  }}
-                >
-                  Kembali ke halaman masuk
-                </button>
-              </div>
-            ) : (
-            <form onSubmit={handleLoginSubmit} className="space-y-3.5">
-              <div className="space-y-1.5">
-                <Label htmlFor="login-phone">Nomor WhatsApp</Label>
-                <Input
-                  id="login-phone"
-                  type="tel"
-                  autoComplete="tel"
-                  placeholder="08xxxxxxxxxx"
-                  required
-                  value={loginPhone}
-                  onChange={(event) => setLoginPhone(event.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="login-password">Kata sandi</Label>
-                <Input
-                  id="login-password"
-                  type="password"
-                  autoComplete="current-password"
-                  required
-                  value={loginPassword}
-                  onChange={(event) => setLoginPassword(event.target.value)}
-                />
-              </div>
-              {errorMessage && (
-                <p role="alert" className="text-sm text-red-600">
-                  {errorMessage}
-                </p>
-              )}
-              <Button type="submit" disabled={isLoading} className="w-full">
-                {isLoading ? 'Memverifikasi…' : 'Masuk'}
-              </Button>
-              <button
-                type="button"
-                className="w-full text-sm text-slate-600 underline"
-                onClick={() => {
-                  setResetMode(true);
-                  setErrorMessage('');
-                }}
-              >
-                Lupa kata sandi?
-              </button>
-            </form>
-            )}
-          </TabsContent>
-
-          <TabsContent value="register">
-            {!otpSent ? (
-              <form onSubmit={handleSendOtp} className="space-y-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="reg-name">Nama lengkap</Label>
-                  <Input
-                    id="reg-name"
-                    autoComplete="name"
-                    required
-                    maxLength={100}
-                    value={regName}
-                    onChange={(event) => setRegName(event.target.value)}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="reg-phone">Nomor WhatsApp</Label>
-                  <Input
-                    id="reg-phone"
-                    type="tel"
-                    autoComplete="tel"
-                    placeholder="08xxxxxxxxxx"
-                    required
-                    value={regPhone}
-                    onChange={(event) => setRegPhone(event.target.value)}
-                  />
-                  <p className="text-xs text-slate-500">
-                    Kami akan mengirim kode verifikasi ke nomor ini.
-                  </p>
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="reg-password">Kata sandi</Label>
-                  <Input
-                    id="reg-password"
-                    type="password"
-                    autoComplete="new-password"
-                    minLength={8}
-                    required
-                    value={regPassword}
-                    onChange={(event) => setRegPassword(event.target.value)}
-                  />
-                  <p className="text-xs text-slate-500">Minimal 8 karakter.</p>
-                </div>
-                <p className="text-xs text-slate-500">
-                  Akun baru terdaftar sebagai pelanggan. Akses member ditetapkan
-                  setelah persetujuan admin.
-                </p>
-                {errorMessage && (
-                  <p role="alert" className="text-sm text-red-600">
-                    {errorMessage}
-                  </p>
-                )}
-                <Button type="submit" disabled={isLoading} className="w-full">
-                  {isLoading ? 'Mengirim kode…' : 'Kirim kode verifikasi'}
-                </Button>
-              </form>
-            ) : otpVerified ? (
-              <form onSubmit={handleFinishRegistration} className="space-y-3">
-                <p className="text-sm text-slate-600">
-                  Nomor WhatsApp berhasil diverifikasi. Selesaikan pembuatan akun
-                  untuk mulai menggunakan {storeName || 'layanan ini'}.
-                </p>
-                {errorMessage && (
-                  <p role="alert" className="text-sm text-red-600">
-                    {errorMessage}
-                  </p>
-                )}
-                <Button type="submit" disabled={isLoading} className="w-full">
-                  {isLoading ? 'Menyimpan akun…' : 'Selesaikan pembuatan akun'}
-                </Button>
-              </form>
-            ) : (
-              <form onSubmit={handleVerifyOtp} className="space-y-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="verification-code">Kode verifikasi</Label>
-                  <Input
-                    id="verification-code"
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    pattern="[0-9]{6}"
-                    maxLength={6}
-                    required
-                    value={verificationCode}
-                    onChange={(event) =>
-                      setVerificationCode(event.target.value.replace(/\D/g, ''))
-                    }
-                  />
-                  <p className="text-xs text-slate-500">
-                    Masukkan kode 6 digit yang dikirim ke {verifiedPhone}.
-                  </p>
-                </div>
-                {errorMessage && (
-                  <p role="alert" className="text-sm text-red-600">
-                    {errorMessage}
-                  </p>
-                )}
-                <Button type="submit" disabled={isLoading} className="w-full">
-                  {isLoading ? 'Memverifikasi…' : 'Verifikasi & buat akun'}
-                </Button>
-                <button
-                  type="button"
-                  className="w-full text-sm text-slate-600 underline"
-                  onClick={() => {
-                    setOtpSent(false);
-                    setOtpVerified(false);
-                    setVerificationCode('');
-                    setErrorMessage('');
-                  }}
-                >
-                  Ganti nomor WhatsApp
-                </button>
-              </form>
-            )}
-          </TabsContent>
+              </TabsContent>
             </Tabs>
           </section>
         </div>

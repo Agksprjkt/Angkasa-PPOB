@@ -23,6 +23,7 @@ import {
   Search,
   Smartphone,
   Ticket,
+  Trash2,
   WalletCards,
   Wifi,
   X,
@@ -110,6 +111,7 @@ function ProviderDetailPanel({
   const [pendingProductIds, setPendingProductIds] = useState<Set<string>>(() => new Set());
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [productDraft, setProductDraft] = useState<{
+    variant: string;
     sellPriceUser: number;
     sellPriceAgent: number;
     compareAtPrice: number | null;
@@ -146,7 +148,8 @@ function ProviderDetailPanel({
     return products.filter((product) =>
       !search ||
       product.name.toLocaleLowerCase('id-ID').includes(search) ||
-      product.vendorCode.toLocaleLowerCase('id-ID').includes(search),
+      product.vendorCode.toLocaleLowerCase('id-ID').includes(search) ||
+      (product.variant ?? '').toLocaleLowerCase('id-ID').includes(search),
     );
   }, [products, query]);
   const allActive = group.allProducts.every((product) => product.status === 'active');
@@ -241,9 +244,41 @@ function ProviderDetailPanel({
     }
   };
 
+  const removeAsset = async (kind: 'icon' | 'cover') => {
+    if (!window.confirm(`Hapus ${kind === 'icon' ? 'ikon' : 'cover'} provider ini?`)) return;
+    setIsUploading(kind);
+    try {
+      const params = new URLSearchParams({
+        category: group.category,
+        operator: group.operator,
+        kind,
+      });
+      const response = await fetch(`/api/admin/product-providers/assets?${params}`, {
+        method: 'DELETE',
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? 'Gambar provider gagal dihapus.');
+      setSettings((current) => ({
+        ...current,
+        [kind === 'icon' ? 'iconUrl' : 'coverUrl']: null,
+      }));
+      try {
+        await refreshProducts();
+      } catch {
+        // catalog refresh is best-effort
+      }
+      addToast('Gambar dihapus', 'Provider kembali memakai ikon bawaan.', 'success');
+    } catch (error) {
+      addToast('Gambar gagal dihapus', error instanceof Error ? error.message : 'Silakan coba lagi.', 'error');
+    } finally {
+      setIsUploading(null);
+    }
+  };
+
   const beginProductEdit = (product: Product) => {
     setEditingProductId(product.id);
     setProductDraft({
+      variant: product.variant ?? '',
       sellPriceUser: product.sellPriceUser,
       sellPriceAgent: product.sellPriceAgent,
       compareAtPrice: product.compareAtPrice ?? null,
@@ -255,7 +290,15 @@ function ProviderDetailPanel({
     if (!productDraft) return;
     setPendingProductIds((current) => new Set(current).add(product.id));
     try {
-      const saved = await updateProduct(product.id, productDraft);
+      // An empty type hands the product back to the Digiflazz sync.
+      const variant = productDraft.variant.trim();
+      const saved = await updateProduct(product.id, {
+        variant: variant || null,
+        sellPriceUser: productDraft.sellPriceUser,
+        sellPriceAgent: productDraft.sellPriceAgent,
+        compareAtPrice: productDraft.compareAtPrice,
+        status: productDraft.status,
+      });
       if (saved) {
         setEditingProductId(null);
         setProductDraft(null);
@@ -289,7 +332,7 @@ function ProviderDetailPanel({
       <button
         type="button"
         onClick={onBack}
-        className="inline-flex items-center gap-2 text-lg font-semibold text-slate-900 hover:text-indigo-700"
+        className="inline-flex items-center gap-2 text-lg font-semibold text-slate-900 hover:text-sky-700"
       >
         <ArrowLeft aria-hidden="true" className="h-5 w-5" />
         {categoryLabels[group.category]} {group.operator}
@@ -309,7 +352,7 @@ function ProviderDetailPanel({
               return (
                 <div key={kind} className="space-y-2">
                   <label className="text-sm font-medium text-slate-700">{label}</label>
-                  <label className={`flex h-28 cursor-pointer items-center justify-center overflow-hidden rounded-lg border border-dashed border-slate-300 bg-slate-50 text-sm text-slate-500 hover:border-indigo-400 ${
+                  <label className={`flex h-28 cursor-pointer items-center justify-center overflow-hidden rounded-lg border border-dashed border-slate-300 bg-slate-50 text-sm text-slate-500 hover:border-sky-400 ${
                     kind === 'cover' ? 'sm:h-28' : ''
                   }`}>
                     {imageUrl ? (
@@ -331,6 +374,18 @@ function ProviderDetailPanel({
                   <p className="text-xs text-slate-500">
                     {isUploading === kind ? 'Mengunggah…' : recommendation}
                   </p>
+                  {imageUrl && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={isUploading !== null}
+                      onClick={() => void removeAsset(kind)}
+                    >
+                      <Trash2 className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                      Hapus {kind === 'icon' ? 'ikon' : 'cover'}
+                    </Button>
+                  )}
                 </div>
               );
             })}
@@ -346,7 +401,7 @@ function ProviderDetailPanel({
               maxLength={2000}
               value={settings.description}
               onChange={(event) => setSettings((current) => ({ ...current, description: event.target.value }))}
-              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
             />
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -523,6 +578,32 @@ function ProviderDetailPanel({
                         <div className="min-w-0">
                           <span className="block font-medium text-slate-900">{product.name}</span>
                           <span className="font-mono text-xs text-slate-500">{product.vendorCode}</span>
+                          {editing ? (
+                            <div className="mt-1 space-y-1">
+                              <Input
+                                aria-label={`Tipe produk ${product.name}`}
+                                placeholder="Tipe (mis. Combo Lite)"
+                                maxLength={60}
+                                value={productDraft.variant}
+                                onChange={(event) => setProductDraft((current) => current
+                                  ? { ...current, variant: event.target.value }
+                                  : current)}
+                                className="h-8 w-44 text-xs"
+                              />
+                              <span className="block text-[10px] text-slate-500">
+                                Kosongkan agar tipe diambil ulang dari Digiflazz.
+                              </span>
+                            </div>
+                          ) : product.variant ? (
+                            <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                              product.variantSource === 'manual'
+                                ? 'bg-sky-50 text-sky-700'
+                                : 'bg-slate-100 text-slate-600'
+                            }`}>
+                              {product.variant}
+                              {product.variantSource === 'manual' ? ' · manual' : ''}
+                            </span>
+                          ) : null}
                         </div>
                       </div>
                     </td>
@@ -679,15 +760,35 @@ function ProviderDetailPanel({
                           </Button>
                         </div>
                       ) : (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => beginProductEdit(product)}
-                        >
-                          <Pencil aria-hidden="true" className="mr-1.5 h-3.5 w-3.5" />
-                          Edit
-                        </Button>
+                        <div className="flex justify-end gap-1.5">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => beginProductEdit(product)}
+                          >
+                            <Pencil aria-hidden="true" className="mr-1.5 h-3.5 w-3.5" />
+                            Edit
+                          </Button>
+                          {product.status === 'active' && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={pending}
+                              onClick={() => {
+                                if (window.confirm(
+                                  `Nonaktifkan "${product.name}"? Produk disembunyikan dari katalog, riwayat transaksi tetap tersimpan.`,
+                                )) {
+                                  void onToggleStatus(product, 'inactive');
+                                }
+                              }}
+                            >
+                              <Trash2 aria-hidden="true" className="mr-1.5 h-3.5 w-3.5" />
+                              Hapus
+                            </Button>
+                          )}
+                        </div>
                       )}
                     </td>
                   </tr>
@@ -751,6 +852,7 @@ export default function ProductManagementPanel({
         product.name,
         product.vendorCode,
         product.operator,
+        product.variant ?? '',
         product.category,
       ].some((value) => value.toLocaleLowerCase('id-ID').includes(normalizedQuery));
     });
@@ -888,7 +990,7 @@ export default function ProductManagementPanel({
                     type="button"
                     aria-pressed={selected}
                     onClick={() => setCategory(item)}
-                    className={`inline-flex h-10 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
+                    className={`inline-flex h-10 items-center gap-2 rounded-lg border px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 ${
                       selected
                         ? 'border-amber-400/40 bg-amber-500/10 text-amber-300'
                         : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-slate-300 hover:bg-slate-100'
@@ -914,7 +1016,7 @@ export default function ProductManagementPanel({
               <Input
                 aria-label="Cari produk"
                 className="pl-9"
-                placeholder="Cari nama, kode vendor, operator…"
+                placeholder="Cari nama, kode vendor, operator, tipe…"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
               />
@@ -1042,7 +1144,7 @@ export default function ProductManagementPanel({
                       <div className="grid min-h-14 grid-cols-[minmax(0,1fr)_5rem_4rem] items-center gap-3 px-4 py-2 sm:grid-cols-[3rem_minmax(0,1fr)_7rem_5rem]">
                         <span className="text-xs text-slate-500">{index + 1}</span>
                         <div className="flex min-w-0 items-center gap-3">
-                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-indigo-50 text-[10px] font-bold uppercase text-indigo-700">
+                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-sky-50 text-[10px] font-bold uppercase text-sky-700">
                             {group.operator.slice(0, 2)}
                           </span>
                           <div className="min-w-0">
@@ -1079,7 +1181,7 @@ export default function ProductManagementPanel({
                             type="button"
                             aria-label={`Edit ${categoryLabels[group.category]} ${group.operator}`}
                             onClick={() => setSelectedGroupKey(group.key)}
-                            className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                            className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
                           >
                             <Pencil aria-hidden="true" className="h-4 w-4" />
                           </button>

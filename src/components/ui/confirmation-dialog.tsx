@@ -17,6 +17,7 @@ export function ConfirmationDialog({
   title,
   description,
   confirmLabel,
+  cancelLabel = 'Batal',
   onConfirm,
   confirmDisabled = false,
   error,
@@ -26,6 +27,7 @@ export function ConfirmationDialog({
   title: string;
   description: string;
   confirmLabel: string;
+  cancelLabel?: string;
   onConfirm: () => void;
   confirmDisabled?: boolean;
   error?: string;
@@ -57,7 +59,7 @@ export function ConfirmationDialog({
             variant="outline"
             onClick={() => onOpenChange(false)}
           >
-            Batal
+            {cancelLabel}
           </Button>
           <Button
             type="button"

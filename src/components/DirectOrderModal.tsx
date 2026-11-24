@@ -1,18 +1,11 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Dialog } from '@base-ui/react/dialog';
-import { ArrowRight, CheckCircle2, CreditCard, LockKeyhole, UserRound, Wallet, X } from 'lucide-react';
+import { ArrowRight, CheckCircle2, CreditCard, UserRound, Wallet, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import {
-  Drawer,
-  DrawerContent,
-  DrawerDescription,
-  DrawerFooter,
-  DrawerHeader,
-  DrawerTitle,
-} from '@/components/ui/drawer';
+import { TransactionPinPad, PIN_LENGTH } from '@/components/TransactionPinPad';
 import { usePPOB } from '@/context/PPOBContext';
 import type { Product } from '@/types/ppob';
 import { validateOrderDestination } from '@/lib/order-input-validation';
@@ -83,13 +76,32 @@ export default function DirectOrderModal({
   const [statusError, setStatusError] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'balance' | 'qris' | null>(null);
   const [transactionPin, setTransactionPin] = useState('');
-  const [pinConfirmation, setPinConfirmation] = useState('');
   const [pinError, setPinError] = useState('');
-  const [pinDrawerOpen, setPinDrawerOpen] = useState(false);
-  const [pinDrawerMode, setPinDrawerMode] = useState<'setup' | 'verify'>('verify');
+  const [pinPadOpen, setPinPadOpen] = useState(false);
   const [pinConfigured, setPinConfigured] = useState<boolean | null>(null);
   const [pinStatusUnavailable, setPinStatusUnavailable] = useState(false);
+  const [isCancelConfirmOpen, setIsCancelConfirmOpen] = useState(false);
   const idempotencyKey = useRef<string | null>(null);
+
+  // Persist the key so a refresh mid-checkout cannot create a duplicate order.
+  const idempotencyStorageKey = product ? `payku:idem:${product.id}` : null;
+  const readStoredIdempotencyKey = useCallback(() => {
+    if (!idempotencyStorageKey) return null;
+    try {
+      return sessionStorage.getItem(idempotencyStorageKey);
+    } catch {
+      return null;
+    }
+  }, [idempotencyStorageKey]);
+  const storeIdempotencyKey = useCallback((key: string | null) => {
+    if (!idempotencyStorageKey) return;
+    try {
+      if (key) sessionStorage.setItem(idempotencyStorageKey, key);
+      else sessionStorage.removeItem(idempotencyStorageKey);
+    } catch {
+      // sessionStorage unavailable — in-memory ref still guards this session
+    }
+  }, [idempotencyStorageKey]);
 
   const displayedPrice = role === 'agent'
     ? product?.sellPriceAgent ?? product?.sellPriceUser ?? 0
@@ -131,15 +143,43 @@ export default function DirectOrderModal({
       setCustomerEmail('');
       setPaymentMethod(null);
       setTransactionPin('');
-      setPinConfirmation('');
       setPinError('');
-      setPinDrawerOpen(false);
+      setPinPadOpen(false);
       setPinConfigured(null);
       setPinStatusUnavailable(false);
+      setIsCancelConfirmOpen(false);
       idempotencyKey.current = null;
     }
     onOpenChange(nextOpen);
   };
+
+  // Closing the checkout abandons the order, so make the buyer confirm it.
+  const requestClose = () => {
+    if (isProcessing) return;
+    setIsCancelConfirmOpen(true);
+  };
+
+  // base-ui handles Escape itself, so intercept it in the capture phase before
+  // the drawer can close and drop the order without asking.
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || isCancelConfirmOpen) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      if (!isProcessing) setIsCancelConfirmOpen(true);
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [isCancelConfirmOpen, isProcessing, open]);
+
+  // Restore a pending key after refresh so retrying reuses the same order.
+  useEffect(() => {
+    if (!open || idempotencyKey.current) return;
+    const stored = readStoredIdempotencyKey();
+    if (stored) idempotencyKey.current = stored;
+  }, [open, readStoredIdempotencyKey]);
 
   useEffect(() => {
     if (!open) return;
@@ -198,54 +238,57 @@ export default function DirectOrderModal({
     return () => controller.abort();
   }, [addToast, open, requiresTransactionPin]);
 
-  const handleBalancePurchase = async () => {
+  const handleBalancePurchase = async (pin?: string) => {
     if (!product) return;
-    if (requiresTransactionPin && !/^\d{6}$/.test(transactionPin)) {
+    const pinToUse = pin ?? transactionPin;
+    if (requiresTransactionPin && !/^\d{6}$/.test(pinToUse)) {
       setPinError('Masukkan PIN yang terdiri dari 6 angka.');
-      return;
-    }
-    if (
-      requiresTransactionPin &&
-      pinDrawerMode === 'setup' &&
-      pinConfirmation !== transactionPin
-    ) {
-      setPinError('Konfirmasi PIN tidak cocok.');
       return;
     }
 
     setIsProcessing(true);
     setPinError('');
     try {
-      if (requiresTransactionPin && pinDrawerMode === 'setup') {
-        const response = await fetch('/api/user/transaction-pin', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pin: transactionPin }),
-        });
-        const result = await response.json() as { error?: string };
-        if (!response.ok) throw new Error(result.error ?? 'TRANSACTION_PIN_STATUS_UNAVAILABLE');
-        setPinConfigured(true);
-        setPinDrawerMode('verify');
-        setPinConfirmation('');
-      }
-
       const result = await buyProductWithBalance(
         product.id,
         destination,
         customerName,
         serverZoneId,
-        requiresTransactionPin ? transactionPin : undefined,
+        requiresTransactionPin ? pinToUse : undefined,
       );
       router.push(`/invoice/${encodeURIComponent(result.transaction.id)}`);
-      setPinDrawerOpen(false);
+      setPinPadOpen(false);
       setDrawerOpen(false);
+      storeIdempotencyKey(null);
     } catch (error) {
       setPinError(
         error instanceof Error ? requestError(error.message) : 'Transaksi gagal diproses.',
       );
+      // Clear the digits so a retry does not need a manual backspace.
+      setTransactionPin('');
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  const handlePinSubmit = (pin: string) => {
+    void handleBalancePurchase(pin);
+  };
+
+  const pressPinKey = (key: string) => {
+    setPinError('');
+    setTransactionPin((current) => {
+      if (current.length >= PIN_LENGTH) return current;
+      const next = current + key;
+      // Submit exactly once, when the sixth digit lands.
+      if (next.length === PIN_LENGTH) queueMicrotask(() => handlePinSubmit(next));
+      return next;
+    });
+  };
+
+  const removePinDigit = () => {
+    setPinError('');
+    setTransactionPin((current) => current.slice(0, -1));
   };
 
   const handleBalancePaymentClick = () => {
@@ -254,11 +297,16 @@ export default function DirectOrderModal({
       return;
     }
 
-    setPinDrawerMode(pinConfigured ? 'verify' : 'setup');
+    // PIN is managed on its own page; never set it up inside checkout.
+    if (pinConfigured === false) {
+      setDrawerOpen(false);
+      router.push('/dashboard/settings');
+      return;
+    }
+
     setTransactionPin('');
-    setPinConfirmation('');
     setPinError('');
-    setPinDrawerOpen(true);
+    setPinPadOpen(true);
   };
 
   const handleQrislyPurchase = async () => {
@@ -273,18 +321,11 @@ export default function DirectOrderModal({
       return;
     }
 
-    try {
-      sessionStorage.setItem('payku:checkout-storage-check', '1');
-      sessionStorage.removeItem('payku:checkout-storage-check');
-    } catch {
-      setStatusError('Browser tidak mengizinkan penyimpanan akses invoice. Aktifkan penyimpanan sesi lalu coba lagi.');
-      return;
-    }
-
     setIsProcessing(true);
     setStatusError('');
     try {
       idempotencyKey.current ??= crypto.randomUUID();
+      storeIdempotencyKey(idempotencyKey.current);
       const response = await fetch('/api/orders/qrisly', {
         method: 'POST',
         headers: {
@@ -312,7 +353,10 @@ export default function DirectOrderModal({
         message?: string;
       };
       if (!response.ok || !result.invoice) {
-        if (response.status < 500) idempotencyKey.current = null;
+        if (response.status < 500) {
+          idempotencyKey.current = null;
+          storeIdempotencyKey(null);
+        }
         throw new Error(result.message ?? requestError(result.error));
       }
 
@@ -322,7 +366,20 @@ export default function DirectOrderModal({
         lookupCode: result.invoice.invoiceNumber,
         customerPhone: currentUser?.phone ?? customerPhone,
       } satisfies StoredOrderAccess;
-      sessionStorage.setItem('payku:pending-qrisly-order', JSON.stringify(access));
+      let stored = true;
+      try {
+        sessionStorage.setItem('payku:pending-qrisly-order', JSON.stringify(access));
+      } catch {
+        stored = false;
+      }
+      storeIdempotencyKey(null);
+      if (!stored) {
+        addToast(
+          'Akses invoice disimpan terbatas',
+          `Penyimpanan browser diblokir. Buka invoice lewat Cek Pesanan dengan kode ${access.lookupCode}.`,
+          'warning',
+        );
+      }
       router.push(`/invoice/${encodeURIComponent(result.invoice.id)}`);
       setDrawerOpen(false);
     } catch (error) {
@@ -340,7 +397,6 @@ export default function DirectOrderModal({
         <Dialog.Portal>
           <Dialog.Backdrop className="fixed inset-0 z-50 bg-slate-950/55 backdrop-blur-[2px] transition-opacity" />
           <Dialog.Popup className="fixed inset-x-0 bottom-0 z-50 mx-auto flex max-h-[92dvh] w-full max-w-2xl animate-slideUp flex-col overflow-hidden rounded-t-3xl border border-slate-200 bg-white shadow-2xl outline-none">
-          <div className="mx-auto mt-3 h-1.5 w-10 shrink-0 rounded-full bg-slate-300" />
           <header className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 pb-4 pt-3 sm:px-7">
             <div>
               <Dialog.Title className="text-lg font-bold text-slate-900">
@@ -352,7 +408,7 @@ export default function DirectOrderModal({
             </div>
             <button
               type="button"
-              onClick={() => setDrawerOpen(false)}
+              onClick={requestClose}
               className="rounded-full p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
               aria-label="Tutup checkout"
             >
@@ -363,7 +419,7 @@ export default function DirectOrderModal({
           <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5 sm:px-7">
             <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <h3 className="mb-3 flex items-center gap-2 text-sm font-bold text-slate-900">
-                <CreditCard className="h-4 w-4 text-violet-600" />
+                <CreditCard className="h-4 w-4 text-sky-600" />
                 Ringkasan pesanan
               </h3>
               <dl className="space-y-2.5 text-xs sm:text-sm">
@@ -389,7 +445,7 @@ export default function DirectOrderModal({
                 )}
                 <div className="flex justify-between gap-4 border-t border-slate-200 pt-3">
                   <dt className="font-semibold text-slate-700">Total bayar</dt>
-                  <dd className="text-base font-bold text-violet-700">
+                  <dd className="text-base font-bold text-sky-700">
                     Rp {displayedPrice.toLocaleString('id-ID')}
                   </dd>
                 </div>
@@ -423,13 +479,13 @@ export default function DirectOrderModal({
                     value={contactName}
                     onChange={(event) => setContactName(event.target.value)}
                     placeholder="Nama lengkap"
-                    className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm outline-none transition focus:border-violet-500 focus:ring-2 focus:ring-violet-100"
+                    className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
                     required
                   />
                 </label>
                 <label className="block space-y-1.5 text-xs font-medium text-slate-700">
                   <span className="flex items-center gap-1">
-                    <UserRound className="h-3.5 w-3.5 text-violet-600" />
+                    <UserRound className="h-3.5 w-3.5 text-sky-600" />
                     Nomor WhatsApp <span className="text-rose-600">*</span>
                   </span>
                   <input
@@ -439,7 +495,7 @@ export default function DirectOrderModal({
                     value={customerPhone}
                     onChange={(event) => setCustomerPhone(event.target.value)}
                     placeholder="08xxxxxxxxxx"
-                    className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm outline-none transition focus:border-violet-500 focus:ring-2 focus:ring-violet-100"
+                    className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
                     required
                   />
                 </label>
@@ -452,7 +508,7 @@ export default function DirectOrderModal({
                     value={customerEmail}
                     onChange={(event) => setCustomerEmail(event.target.value)}
                     placeholder="nama@email.com"
-                    className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm outline-none transition focus:border-violet-500 focus:ring-2 focus:ring-violet-100"
+                    className="h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
                   />
                 </label>
               </section>
@@ -478,12 +534,12 @@ export default function DirectOrderModal({
                   aria-pressed={activePaymentMethod === 'balance'}
                   className={`flex w-full items-center justify-between rounded-xl border p-3.5 text-left transition disabled:cursor-not-allowed disabled:opacity-55 ${
                     activePaymentMethod === 'balance'
-                      ? 'border-violet-500 bg-violet-50 ring-2 ring-violet-100'
+                      ? 'border-sky-500 bg-sky-50 ring-2 ring-sky-100'
                       : 'border-slate-200 bg-white hover:border-slate-300'
                   }`}
                 >
                   <span className="flex items-center gap-3">
-                    <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-100 text-blue-700">
+                    <span className="flex h-10 w-10 items-center justify-center text-blue-700">
                       <Wallet className="h-5 w-5" />
                     </span>
                     <span>
@@ -495,7 +551,7 @@ export default function DirectOrderModal({
                     </span>
                   </span>
                   {activePaymentMethod === 'balance' && (
-                    <CheckCircle2 className="h-5 w-5 text-violet-600" />
+                    <CheckCircle2 className="h-5 w-5 text-sky-600" />
                   )}
                 </button>
               )}
@@ -506,12 +562,12 @@ export default function DirectOrderModal({
                 aria-pressed={activePaymentMethod === 'qris'}
                 className={`flex w-full items-center justify-between rounded-xl border p-3.5 text-left transition disabled:cursor-not-allowed disabled:opacity-55 ${
                   activePaymentMethod === 'qris'
-                    ? 'border-violet-500 bg-violet-50 ring-2 ring-violet-100'
+                    ? 'border-sky-500 bg-sky-50 ring-2 ring-sky-100'
                     : 'border-slate-200 bg-white hover:border-slate-300'
                 }`}
               >
                 <span className="flex items-center gap-3">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
+                  <span className="flex h-10 w-10 items-center justify-center text-emerald-700">
                     <CreditCard className="h-5 w-5" />
                   </span>
                   <span>
@@ -522,7 +578,7 @@ export default function DirectOrderModal({
                   </span>
                 </span>
                 {activePaymentMethod === 'qris' && (
-                  <CheckCircle2 className="h-5 w-5 text-violet-600" />
+                  <CheckCircle2 className="h-5 w-5 text-sky-600" />
                 )}
               </button>
             </section>
@@ -538,13 +594,13 @@ export default function DirectOrderModal({
             <Button
               variant="outline"
               className="flex-1"
-              onClick={() => setDrawerOpen(false)}
+              onClick={requestClose}
               disabled={isProcessing}
             >
               Batal
             </Button>
             <Button
-              className="flex-1 bg-violet-600 text-white hover:bg-violet-700"
+              className="flex-1 bg-sky-600 text-white hover:bg-sky-700"
               onClick={() => {
                 if (activePaymentMethod === 'balance') {
                   handleBalancePaymentClick();
@@ -559,122 +615,66 @@ export default function DirectOrderModal({
                 : activePaymentMethod === 'balance' &&
                     requiresTransactionPin &&
                     pinConfigured === false
-                  ? 'Atur PIN & Bayar'
+                  ? 'Atur PIN di Pengaturan'
                   : `Bayar Rp ${displayedPrice.toLocaleString('id-ID')}`}
               {!isProcessing && <ArrowRight className="ml-1.5 h-4 w-4" />}
             </Button>
           </footer>
+          {/* Rendered inside the popup: base-ui marks everything outside it inert. */}
+          {isCancelConfirmOpen && (
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 bg-white/97 p-6 text-center backdrop-blur-sm">
+              <span className="flex h-12 w-12 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+                <X className="h-6 w-6" />
+              </span>
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-slate-900">Batalkan pesanan?</h3>
+                <p className="text-sm text-slate-600">Pesanan akan dibatalkan, lanjut?</p>
+              </div>
+              <div className="flex w-full max-w-sm flex-col gap-2">
+                <Button
+                  className="w-full bg-rose-600 text-white hover:bg-rose-700"
+                  onClick={() => {
+                    setIsCancelConfirmOpen(false);
+                    setDrawerOpen(false);
+                  }}
+                >
+                  Ya, batalkan
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => setIsCancelConfirmOpen(false)}
+                >
+                  Tetap di sini
+                </Button>
+              </div>
+            </div>
+          )}
           </Dialog.Popup>
         </Dialog.Portal>
       </Dialog.Root>
 
-      <Drawer
-        open={pinDrawerOpen}
-        onOpenChange={(nextOpen) => {
-          setPinDrawerOpen(nextOpen);
-          if (!nextOpen) {
+      {pinPadOpen && (
+        <TransactionPinPad
+          productName={product.name}
+          amount={displayedPrice}
+          digits={transactionPin}
+          isProcessing={isProcessing}
+          error={pinError}
+          onKey={pressPinKey}
+          onBack={removePinDigit}
+          onCancel={() => {
+            setPinPadOpen(false);
             setTransactionPin('');
-            setPinConfirmation('');
             setPinError('');
-          }
-        }}
-      >
-        <DrawerContent>
-          <DrawerHeader className="flex items-start gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-700">
-              <LockKeyhole className="h-5 w-5" />
-            </span>
-            <div>
-              <DrawerTitle>
-                {pinDrawerMode === 'setup' ? 'Atur PIN transaksi' : 'Masukkan PIN transaksi'}
-              </DrawerTitle>
-              <DrawerDescription>
-                {pinDrawerMode === 'setup'
-                  ? 'Buat PIN 6 digit. PIN ini diperlukan setiap kali membayar dengan saldo.'
-                  : 'Konfirmasi pembayaran saldo dengan PIN 6 digit Anda.'}
-              </DrawerDescription>
-            </div>
-          </DrawerHeader>
-
-          <div className="space-y-4 px-5 py-5">
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-xs text-slate-500">{product.name}</p>
-              <p className="mt-1 font-bold text-violet-700">
-                Rp {displayedPrice.toLocaleString('id-ID')}
-              </p>
-            </div>
-            <label className="block space-y-1.5 text-sm font-medium text-slate-700">
-              {pinDrawerMode === 'setup' ? 'PIN baru' : 'PIN 6 digit'}
-              <input
-                type="password"
-                inputMode="numeric"
-                autoComplete={pinDrawerMode === 'setup' ? 'new-password' : 'current-password'}
-                pattern="[0-9]{6}"
-                maxLength={6}
-                value={transactionPin}
-                onChange={(event) => {
-                  setTransactionPin(event.target.value.replace(/\D/g, '').slice(0, 6));
-                  setPinError('');
-                }}
-                placeholder="••••••"
-                className="h-12 w-full rounded-xl border border-slate-300 bg-white px-3 text-center text-xl tracking-[0.6em] outline-none transition focus:border-violet-500 focus:ring-2 focus:ring-violet-100"
-                autoFocus
-              />
-            </label>
-            {pinDrawerMode === 'setup' && (
-              <label className="block space-y-1.5 text-sm font-medium text-slate-700">
-                Konfirmasi PIN baru
-                <input
-                  type="password"
-                  inputMode="numeric"
-                  autoComplete="new-password"
-                  pattern="[0-9]{6}"
-                  maxLength={6}
-                  value={pinConfirmation}
-                  onChange={(event) => {
-                    setPinConfirmation(event.target.value.replace(/\D/g, '').slice(0, 6));
-                    setPinError('');
-                  }}
-                  placeholder="Ulangi PIN 6 digit"
-                  className="h-12 w-full rounded-xl border border-slate-300 bg-white px-3 text-center text-xl tracking-[0.6em] outline-none transition focus:border-violet-500 focus:ring-2 focus:ring-violet-100"
-                />
-              </label>
-            )}
-            {pinError && (
-              <p role="alert" className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                {pinError}
-              </p>
-            )}
-          </div>
-
-          <DrawerFooter>
-            <Button
-              variant="outline"
-              className="flex-1"
-              onClick={() => setPinDrawerOpen(false)}
-              disabled={isProcessing}
-            >
-              Batal
-            </Button>
-            <Button
-              className="flex-1 bg-violet-600 text-white hover:bg-violet-700"
-              onClick={() => void handleBalancePurchase()}
-              disabled={
-                isProcessing ||
-                transactionPin.length !== 6 ||
-                (pinDrawerMode === 'setup' &&
-                  (pinConfirmation.length !== 6 || pinConfirmation !== transactionPin))
-              }
-            >
-              {isProcessing
-                ? 'Memproses...'
-                : pinDrawerMode === 'setup'
-                  ? 'Simpan PIN & Bayar'
-                  : `Bayar Rp ${displayedPrice.toLocaleString('id-ID')}`}
-            </Button>
-          </DrawerFooter>
-        </DrawerContent>
-      </Drawer>
+          }}
+          onGoToSettings={() => {
+            setPinPadOpen(false);
+            setDrawerOpen(false);
+            router.push('/dashboard/settings');
+          }}
+        />
+      )}
     </>
   );
 }

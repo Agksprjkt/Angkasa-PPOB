@@ -3,8 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAuth } from '@/lib/server/auth';
 import { getDatabase } from '@/lib/server/db/client';
 import { paymentMethods } from '@/lib/server/db/schema';
-import { getUploadedImagePath } from '@/lib/server/uploaded-image';
-import { access } from 'node:fs/promises';
+import { uploadedImageExists } from '@/lib/server/uploaded-image';
 
 export const runtime = 'nodejs';
 
@@ -79,7 +78,7 @@ export async function PUT(request: NextRequest) {
       typeof id !== 'string' ||
       !/^[\da-f-]{36}$/i.test(id) ||
       ids.has(id) ||
-      (type !== 'bank_transfer' && type !== 'static_qris') ||
+      (type !== 'bank_transfer' && type !== 'ewallet' && type !== 'static_qris') ||
       typeof label !== 'string' || !label.trim() || label.trim().length > 80 ||
       typeof instructions !== 'string' || instructions.length > 500 ||
       typeof enabled !== 'boolean'
@@ -88,7 +87,7 @@ export async function PUT(request: NextRequest) {
     }
     ids.add(id);
 
-    if (type === 'bank_transfer') {
+    if (type === 'bank_transfer' || type === 'ewallet') {
       if (
         typeof bankName !== 'string' || !bankName.trim() || bankName.trim().length > 80 ||
         typeof accountNumber !== 'string' || !accountNumber.trim() || accountNumber.trim().length > 50 ||
@@ -111,9 +110,7 @@ export async function PUT(request: NextRequest) {
       if (typeof qrImageFile !== 'string') {
         return NextResponse.json({ error: 'QR_IMAGE_REQUIRED' }, { status: 400 });
       }
-      try {
-        await access(getUploadedImagePath('payment-methods', qrImageFile));
-      } catch {
+      if (!(await uploadedImageExists('payment-methods', qrImageFile))) {
         return NextResponse.json({ error: 'QR_IMAGE_NOT_FOUND' }, { status: 400 });
       }
       methods.push({

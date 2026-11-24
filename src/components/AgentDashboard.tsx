@@ -91,23 +91,23 @@ export default function AgentDashboard() {
   return (
     <div className="dashboard-content space-y-6">
       {/* Top Banner */}
-      <div id="agent-overview" className="scroll-mt-24 p-6 rounded-2xl bg-gradient-to-r from-emerald-950 via-slate-900 to-slate-950 text-white border border-emerald-900/40 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div id="agent-overview" className="liquid-member-hero scroll-mt-24 flex flex-col justify-between gap-4 rounded-2xl border border-white/80 bg-white/70 p-6 text-slate-900 shadow-[0_8px_32px_-12px_rgba(15,23,42,0.12)] backdrop-blur-xl md:flex-row md:items-center">
         <div>
           <div className="flex items-center gap-2 mb-1">
             <Badge variant="success" className="text-xs font-bold uppercase tracking-wide">
               Portal Khusus Member Reseller
             </Badge>
-            <span className="text-xs text-emerald-400 font-semibold">• Harga Member Aktif</span>
+            <span className="text-xs font-semibold text-emerald-700">• Harga Member Aktif</span>
           </div>
           <h2 className="text-xl sm:text-2xl font-bold tracking-tight">
             Dashboard Mitra Member - {currentUser?.name || counterName}
           </h2>
-          <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-xl">
+          <p className="mt-1 max-w-xl text-xs text-slate-600 sm:text-sm">
             Nikmati harga khusus member, kelola struk kasir toko Anda, dan pantau margin laba setiap transaksi.
           </p>
         </div>
 
-        <p className="max-w-xs rounded-xl border border-amber-800/60 bg-amber-950/50 px-3 py-2 text-xs text-amber-100">
+        <p className="max-w-xs rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-800">
           Penarikan komisi belum tersedia. Saldo tidak akan berubah dari dashboard ini.
         </p>
       </div>
@@ -168,18 +168,20 @@ export default function AgentDashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left: Custom Struk Printer Settings for Counter */}
         <div id="agent-counter" className="scroll-mt-24 lg:col-span-5 space-y-4">
-          <Card>
-            <CardHeader>
+          <details className="rounded-xl border border-slate-200 bg-white">
+            <summary className="cursor-pointer list-none px-4 py-3 [&::-webkit-details-marker]:hidden">
               <div className="flex items-center gap-2">
-                <Store className="w-5 h-5 text-emerald-600" />
-                <CardTitle className="text-base">Preview Struk Kasir Konter</CardTitle>
+                <Store className="w-4 h-4 text-emerald-600" />
+                <span className="text-sm font-semibold text-slate-900">Pratinjau struk kasir</span>
+                <span className="ml-auto rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                  Belum tersambung
+                </span>
               </div>
-              <CardDescription>
-                Pratinjau ini hanya berlaku di halaman ini dan belum tersambung ke transaksi atau struk yang dicetak.
-              </CardDescription>
-            </CardHeader>
-
-            <CardContent>
+              <p className="mt-1 text-xs text-slate-500">
+                Hanya contoh tampilan. Tidak mengubah transaksi atau struk yang dicetak.
+              </p>
+            </summary>
+            <CardContent className="border-t border-slate-100">
               <div className="space-y-3.5">
                 <div className="space-y-1">
                   <Label htmlFor="counter-name">Nama Konter / Toko di Struk</Label>
@@ -221,7 +223,7 @@ export default function AgentDashboard() {
                 </Button>
               </div>
             </CardContent>
-          </Card>
+          </details>
 
           {/* Struk Preview Card */}
           <Card className="border-dashed bg-slate-50/50">

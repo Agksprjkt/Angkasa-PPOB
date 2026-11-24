@@ -15,10 +15,17 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { LoadingState } from '@/components/ui/crystal-loader';
 import IntegrationSettingsPanel from '@/components/IntegrationSettingsPanel';
 import PaymentMethodsPanel from '@/components/PaymentMethodsPanel';
 import StoreSettingsPanel from '@/components/StoreSettingsPanel';
+import SystemSettingsPanel from '@/components/SystemSettingsPanel';
+import StoreLogo from '@/components/StoreLogo';
 import AdminTransactionsPanel from '@/components/AdminTransactionsPanel';
+import PromotionManagementPanel from '@/components/PromotionManagementPanel';
+import FlashSalePanel from '@/components/FlashSalePanel';
+import FeaturedProductsPanel from '@/components/FeaturedProductsPanel';
+import LegalDocumentsPanel from '@/components/LegalDocumentsPanel';
 import ProductManagementPanel, {
   type ProductAdminView,
 } from '@/components/ProductManagementPanel';
@@ -31,6 +38,8 @@ import {
   ChevronDown,
   CreditCard,
   CircleAlert,
+  Database,
+  Flame,
   LayoutDashboard,
   Menu,
   Plug,
@@ -41,7 +50,6 @@ import {
   DollarSign,
   Users,
   Clock,
-  Shield,
   X,
   Eye,
   Home,
@@ -55,6 +63,11 @@ import {
   Wallet,
   RefreshCw,
   MessageCircle,
+  Megaphone,
+  Zap,
+  FileText,
+  Trash2,
+  ExternalLink,
 } from 'lucide-react';
 import { useDashboardControls } from '@/components/DashboardWorkspace';
 
@@ -148,6 +161,83 @@ function formatPendingAge(value: string | null | undefined, now: number) {
   return `${Math.floor(hours / 24)} hari ${hours % 24} jam`;
 }
 
+function SidebarGroup({
+  label,
+  collapsed,
+  children,
+}: {
+  label: string;
+  collapsed: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex w-full flex-col gap-1">
+      <p className={`px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500 ${
+        collapsed ? 'lg:hidden' : ''
+      }`}>
+        {label}
+      </p>
+      {children}
+    </div>
+  );
+}
+
+function SidebarNavButton({
+  icon: Icon,
+  label,
+  active,
+  collapsed,
+  onClick,
+  count,
+  expanded,
+  small = false,
+}: {
+  icon: typeof LayoutDashboard;
+  label: string;
+  active: boolean;
+  collapsed: boolean;
+  onClick: () => void;
+  count?: number;
+  expanded?: boolean;
+  small?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      aria-current={active ? 'page' : undefined}
+      aria-label={label}
+      title={label}
+      aria-expanded={expanded}
+      onClick={onClick}
+      className={`flex w-full items-center gap-3 rounded-lg px-3 text-left transition-colors ${
+        small ? 'min-h-9 text-xs' : 'min-h-10 text-sm'
+      } ${
+        active
+          ? 'bg-white font-medium text-slate-950 shadow-sm'
+          : 'text-slate-600 hover:bg-slate-200 hover:text-slate-950'
+      } ${collapsed ? 'lg:justify-center lg:px-0' : ''}`}
+    >
+      <Icon className={`shrink-0 ${small ? 'h-3.5 w-3.5' : 'h-4 w-4'}`} aria-hidden="true" />
+      <span className={collapsed ? 'lg:sr-only' : ''}>{label}</span>
+      {typeof count === 'number' && count > 0 && (
+        <span className={`ml-auto rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+          active ? 'bg-slate-200 text-slate-700' : 'bg-rose-500/15 text-rose-600'
+        } ${collapsed ? 'lg:hidden' : ''}`}>
+          {count}
+        </span>
+      )}
+      {expanded !== undefined && (
+        <ChevronDown
+          aria-hidden="true"
+          className={`ml-auto h-4 w-4 transition-transform ${expanded ? 'rotate-180' : ''} ${
+            collapsed ? 'lg:hidden' : ''
+          }`}
+        />
+      )}
+    </button>
+  );
+}
+
 export default function AdminPanel() {
   const { resolvedTheme, toggleTheme, handleLogout, themeError, logoutError } =
     useDashboardControls();
@@ -167,14 +257,26 @@ export default function AdminPanel() {
     rejectDeposit,
     addProduct,
     updateProduct,
-    storeName,
+    refreshAdminUsers,
+    addToast,
   } = usePPOB();
 
   const [activeAdminTab, setActiveAdminTab] = useState<
-    'metrics' | 'deposits' | 'products' | 'users' | 'settings' | 'transactions' | 'digiflazz'
+    | 'metrics'
+    | 'deposits'
+    | 'products'
+    | 'users'
+    | 'settings'
+    | 'transactions'
+    | 'digiflazz'
+    | 'promotions'
+    | 'system'
+    | 'flash-sales'
   >('metrics');
   const [productView, setProductView] = useState<ProductAdminView>('all');
-  const [settingsView, setSettingsView] = useState<'profile' | 'seo' | 'payments'>('profile');
+  const [promotionView, setPromotionView] = useState<'banners' | 'flash-sales' | 'featured'>('banners');
+  const [isPromotionMenuOpen, setIsPromotionMenuOpen] = useState(false);
+  const [settingsView, setSettingsView] = useState<'profile' | 'seo' | 'payments' | 'legal'>('profile');
   const [isProductMenuOpen, setIsProductMenuOpen] = useState(false);
   const [isSettingsMenuOpen, setIsSettingsMenuOpen] = useState(false);
   const [isDesktopSidebarCollapsed, setIsDesktopSidebarCollapsed] = useState(false);
@@ -515,33 +617,106 @@ export default function AdminPanel() {
       : metricsDataIsStale
         ? 'Data mungkin usang'
         : 'Data terbaru';
-  const navigation = [
-    { id: 'metrics', label: 'Ringkasan', icon: LayoutDashboard },
-    { id: 'transactions', label: 'Transaksi', icon: ReceiptText },
-    { id: 'users', label: 'Pengguna', icon: Users },
-    { id: 'deposits', label: 'Deposit', icon: CreditCard, count: displayedMetrics.pendingDepositsCount },
-    { id: 'digiflazz', label: 'Integrasi API', icon: Plug },
-  ] as const;
-  const activeSection = navigation.find((item) => item.id === activeAdminTab);
+  type AdminTab =
+    | 'metrics'
+    | 'deposits'
+    | 'products'
+    | 'users'
+    | 'settings'
+    | 'transactions'
+    | 'digiflazz'
+    | 'promotions'
+    | 'system'
+    | 'flash-sales';
+  type SidebarNavItem = {
+    id: AdminTab;
+    label: string;
+    icon: typeof LayoutDashboard;
+    count?: number;
+  };
+  const navigationGroups: { label: string; items: SidebarNavItem[] }[] = [
+    {
+      label: 'Operasional',
+      items: [
+        { id: 'metrics', label: 'Ringkasan', icon: LayoutDashboard },
+        { id: 'transactions', label: 'Transaksi', icon: ReceiptText },
+        { id: 'deposits', label: 'Deposit', icon: CreditCard, count: displayedMetrics.pendingDepositsCount },
+      ],
+    },
+    {
+      label: 'Katalog',
+      items: [],
+    },
+    {
+      label: 'Pengguna',
+      items: [
+        { id: 'users', label: 'Pengguna', icon: Users },
+      ],
+    },
+    {
+      label: 'Pengaturan',
+      items: [
+        { id: 'digiflazz', label: 'Integrasi API', icon: Plug },
+        { id: 'system', label: 'Sistem', icon: Database },
+      ],
+    },
+  ];
+  const flatNavigation: SidebarNavItem[] = navigationGroups.flatMap((group) => group.items);
+  const activeSection = flatNavigation.find((item) => item.id === activeAdminTab);
   const productViewLabels: Record<ProductAdminView, string> = {
     all: 'Semua Produk',
     pricing: 'Daftar Harga & Markup',
     active: 'Produk Aktif',
     inactive: 'Produk Nonaktif',
   };
+  const settingsViewLabels = {
+    profile: 'Profil Toko',
+    seo: 'SEO & Pencarian',
+    payments: 'Metode Pembayaran',
+    legal: 'Dokumen Legal',
+  } as const;
+  const promotionViewLabels = {
+    banners: 'Banner Promosi',
+    'flash-sales': 'Flash Sale',
+    featured: 'Produk Unggulan',
+  } as const;
   const activeSectionLabel =
     activeAdminTab === 'products'
       ? productViewLabels[productView]
       : activeAdminTab === 'settings'
-        ? ({
-            profile: 'Profil Toko',
-            seo: 'SEO & Pencarian',
-            payments: 'Metode Pembayaran',
-          } as const)[settingsView]
-      : activeSection?.label ?? 'Dashboard';
+        ? settingsViewLabels[settingsView]
+        : activeAdminTab === 'promotions'
+          ? promotionViewLabels[promotionView]
+          : activeSection?.label ?? 'Dashboard';
 
-  const handleOpenAddProduct = () => {
-    setProductForm({
+  const deleteUser = async (user: { id: string; name: string }) => {
+    if (!window.confirm(
+      `Hapus akun "${user.name}"? Akun dengan riwayat transaksi atau deposit tidak dapat dihapus.`,
+    )) return;
+    try {
+      const response = await fetch(`/api/admin/users?id=${encodeURIComponent(user.id)}`, {
+        method: 'DELETE',
+      });
+      const body = await response.json() as { error?: string };
+      if (!response.ok) {
+        throw new Error(
+          body.error === 'USER_HAS_HISTORY'
+            ? 'Akun ini memiliki riwayat transaksi/deposit sehingga tidak dapat dihapus.'
+            : body.error ?? 'Akun gagal dihapus.',
+        );
+      }
+      addToast('Akun dihapus', `${user.name} telah dihapus.`, 'success');
+      await refreshAdminUsers();
+    } catch (error) {
+      addToast(
+        'Akun gagal dihapus',
+        error instanceof Error ? error.message : 'Silakan coba kembali.',
+        'error',
+      );
+    }
+  };
+
+  const handleOpenAddProduct = () => {    setProductForm({
       vendorCode: 'SKU' + Math.floor(100 + Math.random() * 900),
       name: '',
       category: 'voucher',
@@ -603,12 +778,12 @@ export default function AdminPanel() {
           <div className={`flex min-w-0 items-center gap-3 ${
             isDesktopSidebarCollapsed ? 'lg:justify-center' : ''
           }`}>
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-900 text-white">
-              <Shield className="h-4 w-4" />
-            </div>
-            <div className={isDesktopSidebarCollapsed ? 'lg:hidden' : ''}>
-              <p className="truncate text-sm font-semibold text-slate-950">{storeName} Admin</p>
-              <p className="text-xs text-slate-500">Kontrol aplikasi</p>
+            <StoreLogo
+              imageClassName="max-h-9 max-w-40"
+              textClassName="max-w-40 text-sm font-semibold text-slate-950"
+            />
+            <div className={`min-w-0 ${isDesktopSidebarCollapsed ? 'lg:hidden' : ''}`}>
+              <p className="truncate text-xs text-slate-500">Kontrol aplikasi</p>
             </div>
           </div>
           <button
@@ -639,70 +814,40 @@ export default function AdminPanel() {
           <Home className="h-4 w-4 shrink-0" />
           <span className={isDesktopSidebarCollapsed ? 'lg:sr-only' : ''}>Kembali ke Home</span>
         </Link>
-        <nav aria-label="Navigasi dashboard admin" className="flex w-full flex-col gap-1">
-          {navigation.slice(0, 4).map((item) => {
-            const Icon = item.icon;
-            const active = activeAdminTab === item.id;
-            return (
-              <button
+        <nav aria-label="Navigasi dashboard admin" className="flex w-full flex-col gap-3">
+          <SidebarGroup label="Operasional" collapsed={isDesktopSidebarCollapsed}>
+            {navigationGroups[0].items.map((item) => (
+              <SidebarNavButton
                 key={item.id}
-                type="button"
-                aria-current={active ? 'page' : undefined}
-                aria-label={item.label}
-                title={item.label}
+                icon={item.icon}
+                label={item.label}
+                active={activeAdminTab === item.id}
+                collapsed={isDesktopSidebarCollapsed}
+                count={'count' in item ? item.count : undefined}
                 onClick={() => {
                   setActiveAdminTab(item.id);
                   setIsMobileSidebarOpen(false);
                 }}
-                className={`flex min-h-10 w-full items-center gap-3 rounded-lg px-3 text-left text-sm transition-colors ${
-                  active
-                    ? 'bg-white font-medium text-slate-950 shadow-sm'
-                    : 'text-slate-600 hover:bg-slate-200 hover:text-slate-950'
-                } ${isDesktopSidebarCollapsed ? 'lg:justify-center lg:px-0' : ''}`}
-              >
-                <Icon className="h-4 w-4 shrink-0" />
-                <span className={isDesktopSidebarCollapsed ? 'lg:sr-only' : ''}>{item.label}</span>
-                {'count' in item && item.count > 0 && (
-                  <span className={`ml-auto rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                    active ? 'bg-slate-200 text-slate-700' : 'bg-rose-500/15 text-rose-300'
-                  } ${isDesktopSidebarCollapsed ? 'lg:hidden' : ''}`}>
-                    {item.count}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-          <div className="w-full">
-            <button
-              type="button"
-              aria-current={activeAdminTab === 'products' ? 'page' : undefined}
-              aria-expanded={isProductMenuOpen}
-              aria-controls="admin-product-submenu"
-              aria-label="Produk"
-              title="Produk"
+              />
+            ))}
+          </SidebarGroup>
+
+          <SidebarGroup label="Katalog" collapsed={isDesktopSidebarCollapsed}>
+            <SidebarNavButton
+              icon={Boxes}
+              label="Produk"
+              active={activeAdminTab === 'products'}
+              collapsed={isDesktopSidebarCollapsed}
+              expanded={isProductMenuOpen}
               onClick={() => {
                 setActiveAdminTab('products');
                 setIsProductMenuOpen((open) => !open);
               }}
-              className={`flex min-h-10 w-full items-center gap-3 rounded-lg px-3 text-left text-sm transition-colors ${
-                activeAdminTab === 'products'
-                  ? 'bg-white font-medium text-slate-950 shadow-sm'
-                  : 'text-slate-600 hover:bg-slate-200 hover:text-slate-950'
-              } ${isDesktopSidebarCollapsed ? 'lg:justify-center lg:px-0' : ''}`}
-            >
-              <Boxes className="h-4 w-4 shrink-0" />
-              <span className={isDesktopSidebarCollapsed ? 'lg:sr-only' : ''}>Produk</span>
-              <ChevronDown
-                aria-hidden="true"
-                className={`ml-auto h-4 w-4 transition-transform ${
-                  isProductMenuOpen ? 'rotate-180' : ''
-                } ${isDesktopSidebarCollapsed ? 'lg:hidden' : ''}`}
-              />
-            </button>
+            />
             {isProductMenuOpen && (
               <div
                 id="admin-product-submenu"
-                className={`ml-3 mt-1 flex flex-col gap-1 border-l border-slate-700 pl-3 ${
+                className={`ml-3 mt-1 flex flex-col gap-1 border-l border-slate-300 pl-3 ${
                   isDesktopSidebarCollapsed ? 'lg:ml-0 lg:border-0 lg:pl-0' : ''
                 }`}
               >
@@ -711,68 +856,109 @@ export default function AdminPanel() {
                   { id: 'pricing', label: 'Daftar Harga & Markup', icon: Tags },
                   { id: 'active', label: 'Produk Aktif', icon: Check },
                   { id: 'inactive', label: 'Produk Nonaktif', icon: Ban },
-                ] as const).map((item) => {
-                  const active = activeAdminTab === 'products' && productView === item.id;
-                  const Icon = item.icon;
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      aria-current={active ? 'page' : undefined}
-                      aria-label={item.label}
-                      title={item.label}
-                      onClick={() => {
-                        setProductView(item.id);
-                        setActiveAdminTab('products');
-                        setIsMobileSidebarOpen(false);
-                      }}
-                      className={`flex min-h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-xs transition-colors ${
-                        active
-                          ? 'bg-slate-200 font-medium text-slate-950'
-                          : 'text-slate-500 hover:bg-slate-200 hover:text-slate-950'
-                      } ${isDesktopSidebarCollapsed ? 'lg:justify-center lg:px-0' : ''}`}
-                    >
-                      <Icon className="h-3.5 w-3.5 shrink-0" />
-                      <span className={isDesktopSidebarCollapsed ? 'lg:sr-only' : ''}>
-                        {item.label}
-                      </span>
-                    </button>
-                  );
-                })}
+                ] as const).map((item) => (
+                  <SidebarNavButton
+                    key={item.id}
+                    icon={item.icon}
+                    label={item.label}
+                    active={activeAdminTab === 'products' && productView === item.id}
+                    collapsed={isDesktopSidebarCollapsed}
+                    small
+                    onClick={() => {
+                      setProductView(item.id);
+                      setActiveAdminTab('products');
+                      setIsMobileSidebarOpen(false);
+                    }}
+                  />
+                ))}
               </div>
             )}
-          </div>
-          <div className="w-full">
-            <button
-              type="button"
-              aria-current={activeAdminTab === 'settings' ? 'page' : undefined}
-              aria-expanded={isSettingsMenuOpen}
-              aria-controls="admin-settings-submenu"
-              aria-label="Pengaturan"
-              title="Pengaturan"
+            {navigationGroups[1].items.map((item) => (
+              <SidebarNavButton
+                key={item.id}
+                icon={item.icon}
+                label={item.label}
+                active={activeAdminTab === item.id}
+                collapsed={isDesktopSidebarCollapsed}
+                onClick={() => {
+                  setActiveAdminTab(item.id);
+                  setIsMobileSidebarOpen(false);
+                }}
+              />
+            ))}
+            <SidebarNavButton
+              icon={Megaphone}
+              label="Promosi"
+              active={activeAdminTab === 'promotions'}
+              collapsed={isDesktopSidebarCollapsed}
+              expanded={isPromotionMenuOpen}
+              onClick={() => {
+                setActiveAdminTab('promotions');
+                setIsPromotionMenuOpen((open) => !open);
+              }}
+            />
+            {isPromotionMenuOpen && (
+              <div
+                id="admin-promotion-submenu"
+                className={`ml-3 mt-1 flex flex-col gap-1 border-l border-slate-300 pl-3 ${
+                  isDesktopSidebarCollapsed ? 'lg:ml-0 lg:border-0 lg:pl-0' : ''
+                }`}
+              >
+                {([
+                  { id: 'banners', label: 'Banner', icon: Megaphone },
+                  { id: 'flash-sales', label: 'Flash Sale', icon: Zap },
+                  { id: 'featured', label: 'Produk Unggulan', icon: Flame },
+                ] as const).map((item) => (
+                  <SidebarNavButton
+                    key={item.id}
+                    icon={item.icon}
+                    label={item.label}
+                    active={activeAdminTab === 'promotions' && promotionView === item.id}
+                    collapsed={isDesktopSidebarCollapsed}
+                    small
+                    onClick={() => {
+                      setPromotionView(item.id);
+                      setActiveAdminTab('promotions');
+                      setIsMobileSidebarOpen(false);
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+          </SidebarGroup>
+
+          <SidebarGroup label="Pengguna" collapsed={isDesktopSidebarCollapsed}>
+            {navigationGroups[2].items.map((item) => (
+              <SidebarNavButton
+                key={item.id}
+                icon={item.icon}
+                label={item.label}
+                active={activeAdminTab === item.id}
+                collapsed={isDesktopSidebarCollapsed}
+                onClick={() => {
+                  setActiveAdminTab(item.id);
+                  setIsMobileSidebarOpen(false);
+                }}
+              />
+            ))}
+          </SidebarGroup>
+
+          <SidebarGroup label="Pengaturan" collapsed={isDesktopSidebarCollapsed}>
+            <SidebarNavButton
+              icon={Settings}
+              label="Pengaturan"
+              active={activeAdminTab === 'settings'}
+              collapsed={isDesktopSidebarCollapsed}
+              expanded={isSettingsMenuOpen}
               onClick={() => {
                 setActiveAdminTab('settings');
                 setIsSettingsMenuOpen((open) => !open);
               }}
-              className={`flex min-h-10 w-full items-center gap-3 rounded-lg px-3 text-left text-sm transition-colors ${
-                activeAdminTab === 'settings'
-                  ? 'bg-white font-medium text-slate-950 shadow-sm'
-                  : 'text-slate-600 hover:bg-slate-200 hover:text-slate-950'
-              } ${isDesktopSidebarCollapsed ? 'lg:justify-center lg:px-0' : ''}`}
-            >
-              <Settings className="h-4 w-4 shrink-0" />
-              <span className={isDesktopSidebarCollapsed ? 'lg:sr-only' : ''}>Pengaturan</span>
-              <ChevronDown
-                aria-hidden="true"
-                className={`ml-auto h-4 w-4 transition-transform ${
-                  isSettingsMenuOpen ? 'rotate-180' : ''
-                } ${isDesktopSidebarCollapsed ? 'lg:hidden' : ''}`}
-              />
-            </button>
+            />
             {isSettingsMenuOpen && (
               <div
                 id="admin-settings-submenu"
-                className={`ml-3 mt-1 flex flex-col gap-1 border-l border-slate-700 pl-3 ${
+                className={`ml-3 mt-1 flex flex-col gap-1 border-l border-slate-300 pl-3 ${
                   isDesktopSidebarCollapsed ? 'lg:ml-0 lg:border-0 lg:pl-0' : ''
                 }`}
               >
@@ -780,64 +966,38 @@ export default function AdminPanel() {
                   { id: 'profile', label: 'Profil Toko', icon: Store },
                   { id: 'seo', label: 'SEO & Pencarian', icon: Search },
                   { id: 'payments', label: 'Metode Pembayaran', icon: QrCode },
-                ] as const).map((item) => {
-                  const active = activeAdminTab === 'settings' && settingsView === item.id;
-                  const Icon = item.icon;
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      aria-current={active ? 'page' : undefined}
-                      aria-label={item.label}
-                      title={item.label}
-                      onClick={() => {
-                        setSettingsView(item.id);
-                        setActiveAdminTab('settings');
-                        setIsMobileSidebarOpen(false);
-                      }}
-                      className={`flex min-h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-xs transition-colors ${
-                        active
-                          ? 'bg-slate-200 font-medium text-slate-950'
-                          : 'text-slate-500 hover:bg-slate-200 hover:text-slate-950'
-                      } ${isDesktopSidebarCollapsed ? 'lg:justify-center lg:px-0' : ''}`}
-                    >
-                      <Icon className="h-3.5 w-3.5 shrink-0" />
-                      <span className={isDesktopSidebarCollapsed ? 'lg:sr-only' : ''}>
-                        {item.label}
-                      </span>
-                    </button>
-                  );
-                })}
+                  { id: 'legal', label: 'Dokumen Legal', icon: FileText },
+                ] as const).map((item) => (
+                  <SidebarNavButton
+                    key={item.id}
+                    icon={item.icon}
+                    label={item.label}
+                    active={activeAdminTab === 'settings' && settingsView === item.id}
+                    collapsed={isDesktopSidebarCollapsed}
+                    small
+                    onClick={() => {
+                      setSettingsView(item.id);
+                      setActiveAdminTab('settings');
+                      setIsMobileSidebarOpen(false);
+                    }}
+                  />
+                ))}
               </div>
             )}
-          </div>
-          {navigation.slice(4).map((item) => {
-            const Icon = item.icon;
-            const active = activeAdminTab === item.id;
-            return (
-              <button
+            {navigationGroups[3].items.map((item) => (
+              <SidebarNavButton
                 key={item.id}
-                type="button"
-                aria-current={active ? 'page' : undefined}
-                aria-label={item.label}
-                title={item.label}
+                icon={item.icon}
+                label={item.label}
+                active={activeAdminTab === item.id}
+                collapsed={isDesktopSidebarCollapsed}
                 onClick={() => {
                   setActiveAdminTab(item.id);
                   setIsMobileSidebarOpen(false);
                 }}
-                className={`flex min-h-10 w-full items-center gap-3 rounded-lg px-3 text-left text-sm transition-colors ${
-                  active
-                    ? 'bg-white font-medium text-slate-950 shadow-sm'
-                    : 'text-slate-600 hover:bg-slate-200 hover:text-slate-950'
-                } ${isDesktopSidebarCollapsed ? 'lg:justify-center lg:px-0' : ''}`}
-              >
-                <Icon className="h-4 w-4 shrink-0" />
-                <span className={isDesktopSidebarCollapsed ? 'lg:sr-only' : ''}>
-                  {item.label}
-                </span>
-              </button>
-            );
-          })}
+              />
+            ))}
+          </SidebarGroup>
         </nav>
 
         <div className={`mt-auto rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-500 ${
@@ -876,7 +1036,7 @@ export default function AdminPanel() {
           </button>
         </div>
         {(themeError || logoutError) && (
-          <p role="alert" className="mt-2 text-xs text-amber-400">
+          <p role="alert" className="mt-2 text-xs text-amber-700">
             {themeError || logoutError}
           </p>
         )}
@@ -912,10 +1072,21 @@ export default function AdminPanel() {
               </h1>
             </div>
           </div>
-          <Badge variant="outline" className="hidden sm:inline-flex">
-            <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            Admin aktif
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+            >
+              <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+              <span className="hidden sm:inline">Lihat toko</span>
+            </Link>
+            <Badge variant="outline" className="hidden sm:inline-flex">
+              <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              Admin aktif
+            </Badge>
+          </div>
         </header>
 
       {/* TAB 1: METRICS */}
@@ -964,7 +1135,9 @@ export default function AdminPanel() {
                 onClick={() => void loadOverview()}
                 disabled={isLoadingMetrics}
               >
-                <RefreshCw className={`mr-2 h-4 w-4 ${isLoadingMetrics ? 'animate-spin' : ''}`} />
+                {isLoadingMetrics
+                  ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                  : <RefreshCw className="mr-2 h-4 w-4" />}
                 {isLoadingMetrics ? 'Memuat…' : 'Perbarui'}
               </Button>
             </div>
@@ -993,7 +1166,9 @@ export default function AdminPanel() {
                 onClick={() => void loadProviderBalances()}
                 disabled={isLoadingProviderBalances}
               >
-                <RefreshCw className={`mr-2 h-4 w-4 ${isLoadingProviderBalances ? 'animate-spin' : ''}`} />
+                {isLoadingProviderBalances
+                  ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                  : <RefreshCw className="mr-2 h-4 w-4" />}
                 {isLoadingProviderBalances ? 'Memuat…' : 'Perbarui'}
               </Button>
             </CardHeader>
@@ -1522,6 +1697,8 @@ export default function AdminPanel() {
       {activeAdminTab === 'settings' && (
         settingsView === 'payments' ? (
           <PaymentMethodsPanel />
+        ) : settingsView === 'legal' ? (
+          <LegalDocumentsPanel />
         ) : (
           <StoreSettingsPanel view={settingsView} />
         )
@@ -1532,6 +1709,7 @@ export default function AdminPanel() {
         <ProductManagementPanel
           products={products.map((product) => ({
             ...product,
+            basePrice: product.basePrice ?? 0,
             sellPriceAgent: product.sellPriceAgent ?? 0,
           }))}
           view={productView}
@@ -1622,6 +1800,17 @@ export default function AdminPanel() {
                     >
                       Ubah Saldo
                     </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={u.id === currentUser?.id}
+                      onClick={() => void deleteUser(u)}
+                      className="border-rose-200 text-rose-700 hover:bg-rose-50"
+                    >
+                      <Trash2 className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+                      Hapus
+                    </Button>
                   </div>
                 </article>
               ))}
@@ -1693,6 +1882,15 @@ export default function AdminPanel() {
                           >
                             Ubah Saldo
                           </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={u.id === currentUser?.id}
+                            onClick={() => void deleteUser(u)}
+                            className="text-[10px] h-7 border-rose-200 text-rose-700 hover:bg-rose-50"
+                          >
+                            Hapus
+                          </Button>
                         </div>
                       </td>
                     </tr>
@@ -1708,9 +1906,23 @@ export default function AdminPanel() {
         <AdminTransactionsPanel />
       )}
 
+      {activeAdminTab === 'promotions' && (
+        promotionView === 'flash-sales' ? (
+          <FlashSalePanel />
+        ) : promotionView === 'featured' ? (
+          <FeaturedProductsPanel />
+        ) : (
+          <PromotionManagementPanel />
+        )
+      )}
+
       {/* TAB 7: SERVER-SIDE INTEGRATION SETTINGS */}
       {activeAdminTab === 'digiflazz' && (
         <IntegrationSettingsPanel />
+      )}
+
+      {activeAdminTab === 'system' && (
+        <SystemSettingsPanel />
       )}
       </div>
 
@@ -1918,6 +2130,11 @@ export default function AdminPanel() {
         </div>
       )}
 
+      {(isLoadingMetrics || isLoadingProviderBalances) && (
+        <LoadingState
+          message={isLoadingMetrics ? 'Memuat ringkasan admin…' : 'Memuat saldo vendor…'}
+        />
+      )}
     </div>
   );
 }

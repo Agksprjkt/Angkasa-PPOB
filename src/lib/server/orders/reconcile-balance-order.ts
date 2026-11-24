@@ -2,41 +2,19 @@ import 'server-only';
 
 import { and, eq, lt, or, sql } from 'drizzle-orm';
 import { checkDigiflazzTransactionStatus } from '@/lib/digiflazz';
+import {
+  isDigiflazzStatusCheckSafe,
+  mapDigiflazzStatus,
+  readDigiflazzTransactionResponse,
+} from '@/lib/digiflazz-protocol';
 import { getDatabase } from '@/lib/server/db/client';
 import { databaseMode } from '@/lib/server/db/database-mode';
 import { balanceLedger, products, transactions } from '@/lib/server/db/schema';
 import { applyBalanceDelta } from '@/lib/server/wallet';
+import { settleFlashSaleForTransaction } from '@/lib/server/flash-sales';
 import type { DigiflazzConfig } from '@/lib/digiflazz';
 
 export const digiflazzReconciliationCooldownMs = 2 * 60_000;
-
-type ProviderResponse = {
-  data: {
-    ref_id: string;
-    status: string;
-    message: string;
-    rc: string;
-    sn?: string;
-  };
-};
-
-function isProviderResponse(value: unknown): value is ProviderResponse {
-  if (typeof value !== 'object' || value === null || !('data' in value)) return false;
-  const data = value.data;
-  return (
-    typeof data === 'object' &&
-    data !== null &&
-    'ref_id' in data &&
-    typeof data.ref_id === 'string' &&
-    'status' in data &&
-    typeof data.status === 'string' &&
-    'message' in data &&
-    typeof data.message === 'string' &&
-    'rc' in data &&
-    typeof data.rc === 'string' &&
-    (!('sn' in data) || typeof data.sn === 'string')
-  );
-}
 
 export async function reconcileBalanceOrder(
   transactionId: string,
@@ -76,6 +54,24 @@ export async function reconcileBalanceOrder(
   if (!buyerSkuCode || !customerNo) {
     throw new Error('Digiflazz request details are unavailable for this pending order.');
   }
+  // Re-querying a pending order older than 90 days makes Digiflazz create a brand
+  // new transaction, which would charge the customer twice. Park it for an admin
+  // instead of throwing, otherwise the reconciler retries it every minute forever.
+  if (!isDigiflazzStatusCheckSafe(transaction.transaction.createdAt, new Date())) {
+    const now = new Date();
+    await db
+      .update(transactions)
+      .set({
+        needsManualReview: true,
+        manualReviewAt: now,
+        updatedAt: now,
+      })
+      .where(and(
+        eq(transactions.id, transactionId),
+        eq(transactions.status, 'pending'),
+      ));
+    return true;
+  }
 
   const claimed = await db
     .update(transactions)
@@ -97,18 +93,12 @@ export async function reconcileBalanceOrder(
     customerNo,
     refId: transaction.transaction.referenceId,
   });
-  if (!isProviderResponse(result) || result.data.ref_id !== transaction.transaction.referenceId) {
+  const response = readDigiflazzTransactionResponse(result);
+  if (!response || response.refId !== transaction.transaction.referenceId) {
     throw new Error('Digiflazz returned an unclear transaction status.');
   }
 
-  const response = result.data;
-  const providerStatus = response.status.toLowerCase();
-  const status =
-    providerStatus === 'sukses' && response.rc === '00'
-      ? 'success'
-      : providerStatus === 'gagal'
-        ? 'failed'
-        : 'pending';
+  const status = mapDigiflazzStatus(response.status, response.rc);
   const vendorResponse = {
     ...(transaction.transaction.vendorResponse ?? {
       code: '',
@@ -152,6 +142,7 @@ export async function reconcileBalanceOrder(
 
       if (!updated) return;
       if (!updated.userId) throw new Error('Pending balance order has no owner to refund.');
+      await settleFlashSaleForTransaction(tx, transactionId, 'released', new Date());
 
       const refundKey = `refund:${updated.referenceId}`;
       const existingRefund = await tx
@@ -172,22 +163,28 @@ export async function reconcileBalanceOrder(
       if ('error' in walletResult) throw new Error(walletResult.error);
     });
   } else {
-    await db
-      .update(transactions)
-      .set({
-        status,
-        needsManualReview: status === 'success' ? false : transaction.transaction.needsManualReview,
-        manualReviewAt: status === 'success'
-          ? null
-          : transaction.transaction.manualReviewAt,
-        sn: status === 'success' ? response.sn ?? null : null,
-        vendorResponse,
-        updatedAt: new Date(),
-      })
-      .where(and(
-        eq(transactions.id, transactionId),
-        eq(transactions.status, 'pending'),
-      ));
+    await db.transaction(async (tx) => {
+      const updated = await tx
+        .update(transactions)
+        .set({
+          status,
+          needsManualReview: status === 'success' ? false : transaction.transaction.needsManualReview,
+          manualReviewAt: status === 'success'
+            ? null
+            : transaction.transaction.manualReviewAt,
+          sn: status === 'success' ? response.sn ?? null : null,
+          vendorResponse,
+          updatedAt: new Date(),
+        })
+        .where(and(
+          eq(transactions.id, transactionId),
+          eq(transactions.status, 'pending'),
+        ))
+        .returning({ id: transactions.id });
+      if (updated[0] && status === 'success') {
+        await settleFlashSaleForTransaction(tx, transactionId, 'consumed', new Date());
+      }
+    });
   }
 
   return true;
@@ -204,6 +201,8 @@ export async function listReconciliationCandidates(batchSize: number, updatedBef
     .where(and(
       eq(transactions.status, 'pending'),
       eq(transactions.paymentMethod, 'balance'),
+      // Orders parked for admin review must not be re-queried at the provider.
+      eq(transactions.needsManualReview, false),
       sql`${transactions.updatedAt} < ${updatedBefore}`,
       or(
         eq(products.vendor, 'Digiflazz'),

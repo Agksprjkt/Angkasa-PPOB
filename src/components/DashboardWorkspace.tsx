@@ -8,20 +8,51 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import type { LucideIcon } from 'lucide-react';
-import { Home, LayoutDashboard, LogOut, Menu, Moon, PanelLeft, Sun, UserRound, X } from 'lucide-react';
+import {
+  Boxes,
+  Home,
+  LayoutDashboard,
+  LogOut,
+  Menu,
+  Moon,
+  PanelLeft,
+  ReceiptText,
+  Settings,
+  Store,
+  Sun,
+  UserRound,
+  Wallet,
+  X,
+} from 'lucide-react';
 import { authClient } from '@/lib/auth-client';
-import { usePPOB } from '@/context/PPOBContext';
-
-type Theme = 'system' | 'light' | 'dark';
+import { useTheme } from '@/lib/theme';
+import StoreLogo from '@/components/StoreLogo';
 
 export interface DashboardNavigationItem {
   label: string;
   href: string;
-  icon: LucideIcon;
+  icon: DashboardNavigationIcon;
 }
+
+export type DashboardNavigationIcon =
+  | 'layoutDashboard'
+  | 'store'
+  | 'boxes'
+  | 'receiptText'
+  | 'settings'
+  | 'wallet';
+
+const navigationIcons: Record<DashboardNavigationIcon, LucideIcon> = {
+  layoutDashboard: LayoutDashboard,
+  store: Store,
+  boxes: Boxes,
+  receiptText: ReceiptText,
+  settings: Settings,
+  wallet: Wallet,
+};
 
 interface DashboardWorkspaceProps {
   label: string;
@@ -29,8 +60,6 @@ interface DashboardWorkspaceProps {
   children: ReactNode;
   navigation?: DashboardNavigationItem[];
 }
-
-const themeStorageKey = 'payku-dashboard-theme';
 
 interface DashboardControls {
   resolvedTheme: 'light' | 'dark';
@@ -57,9 +86,8 @@ export default function DashboardWorkspace({
   navigation,
 }: DashboardWorkspaceProps) {
   const router = useRouter();
-  const { storeName } = usePPOB();
-  const [theme, setTheme] = useState<Theme>('system');
-  const [systemIsDark, setSystemIsDark] = useState(false);
+  const pathname = usePathname();
+  const { theme: resolvedThemeMode, toggleTheme: toggleSharedTheme } = useTheme();
   const [themeError, setThemeError] = useState('');
   const [logoutError, setLogoutError] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -67,24 +95,6 @@ export default function DashboardWorkspace({
   const sidebarRef = useRef<HTMLElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    const media = window.matchMedia('(prefers-color-scheme: dark)');
-    const updateSystemTheme = () => setSystemIsDark(media.matches);
-    updateSystemTheme();
-    media.addEventListener('change', updateSystemTheme);
-
-    try {
-      const savedTheme = window.localStorage.getItem(themeStorageKey);
-      if (savedTheme === 'light' || savedTheme === 'dark') {
-        queueMicrotask(() => setTheme(savedTheme));
-      }
-    } catch {
-      queueMicrotask(() => setThemeError('Preferensi tema tidak dapat dibaca dari browser.'));
-    }
-
-    return () => media.removeEventListener('change', updateSystemTheme);
-  }, []);
 
   useEffect(() => {
     if (!isSidebarOpen) return;
@@ -127,17 +137,11 @@ export default function DashboardWorkspace({
     return () => desktop.removeEventListener('change', closeOnDesktop);
   }, []);
 
-  const resolvedTheme = theme === 'system' ? (systemIsDark ? 'dark' : 'light') : theme;
+  const resolvedTheme = resolvedThemeMode;
 
   const toggleTheme = () => {
-    const nextTheme = resolvedTheme === 'dark' ? 'light' : 'dark';
-    setTheme(nextTheme);
-    try {
-      window.localStorage.setItem(themeStorageKey, nextTheme);
-      setThemeError('');
-    } catch {
-      setThemeError('Tema berubah, tetapi preferensinya tidak dapat disimpan di browser.');
-    }
+    toggleSharedTheme();
+    setThemeError('');
   };
 
   const handleLogout = async () => {
@@ -173,11 +177,11 @@ export default function DashboardWorkspace({
       >
         <div className="flex items-center justify-between gap-3 px-2 py-2">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-900 text-white">
-              <LayoutDashboard className="h-4 w-4" />
-            </div>
+            <StoreLogo
+              imageClassName="max-h-9 max-w-40"
+              textClassName="max-w-40 text-sm font-semibold text-slate-950"
+            />
             <div className={`min-w-0 ${isDesktopSidebarCollapsed ? 'lg:hidden' : ''}`}>
-              <p className="max-w-40 truncate text-sm font-semibold text-slate-950">{storeName}</p>
               <p className="truncate text-xs text-slate-500">{label}</p>
             </div>
           </div>
@@ -210,21 +214,30 @@ export default function DashboardWorkspace({
           className={`flex w-full flex-col gap-1 ${isDesktopSidebarCollapsed ? 'lg:items-center' : ''}`}
           aria-label={`Navigasi ${label}`}
         >
-          {navigation.map(({ label: itemLabel, href, icon: Icon }) => (
-            <a
-              key={href}
-              href={href}
-              aria-label={itemLabel}
-              title={itemLabel}
-              onClick={() => setIsSidebarOpen(false)}
-              className={`flex min-h-10 items-center gap-3 rounded-lg px-3 text-sm text-slate-600 transition-colors hover:bg-slate-200 hover:text-slate-950 ${
-                isDesktopSidebarCollapsed ? 'lg:w-10 lg:justify-center lg:px-0' : 'w-full'
-              }`}
-            >
-              <Icon className="h-4 w-4 shrink-0" />
-              <span className={isDesktopSidebarCollapsed ? 'lg:sr-only' : ''}>{itemLabel}</span>
-            </a>
-          ))}
+          {navigation.map(({ label: itemLabel, href, icon }) => {
+            const Icon = navigationIcons[icon];
+            const isActive = href === pathname;
+            return (
+              <Link
+                key={href}
+                href={href}
+                aria-label={itemLabel}
+                title={itemLabel}
+                aria-current={isActive ? 'page' : undefined}
+                onClick={() => setIsSidebarOpen(false)}
+                className={`flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm text-slate-600 transition-colors hover:bg-slate-200 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 ${
+                  isActive
+                    ? 'bg-white font-semibold text-slate-950 shadow-sm'
+                    : ''
+                } ${
+                  isDesktopSidebarCollapsed ? 'lg:w-10 lg:justify-center lg:px-0' : 'w-full'
+                }`}
+              >
+                <Icon className="h-4 w-4 shrink-0" />
+                <span className={isDesktopSidebarCollapsed ? 'lg:sr-only' : ''}>{itemLabel}</span>
+              </Link>
+            );
+          })}
         </nav>
         <div className="mt-auto space-y-3">
           <div className={`rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-500 ${
@@ -261,7 +274,7 @@ export default function DashboardWorkspace({
             </button>
           </div>
           {(themeError || logoutError) && (
-            <p className="text-xs text-amber-400" role="alert">
+            <p className="text-xs text-amber-700" role="alert">
               {themeError || logoutError}
             </p>
           )}
@@ -274,10 +287,7 @@ export default function DashboardWorkspace({
     <DashboardControlsContext.Provider
       value={{ resolvedTheme, toggleTheme, handleLogout, themeError, logoutError }}
     >
-      <div
-        className="dashboard-workspace min-h-screen"
-        data-dashboard-theme={theme}
-      >
+      <div className="dashboard-workspace min-h-screen" data-dashboard-theme={resolvedTheme}>
         {navigation?.length ? (
           <>
             <div className={`mx-auto grid min-h-screen w-full max-w-[1600px] ${
@@ -313,11 +323,14 @@ export default function DashboardWorkspace({
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">{label}</p>
                   </div>
-                  <span className="ml-auto hidden max-w-48 truncate text-sm text-slate-500 sm:block">
-                    {userName}
-                  </span>
-                </header>
-                <div className="p-4 sm:p-6">{children}</div>
+                  <Link
+                    href="/"
+                    className="ml-auto inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 text-xs font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
+                  >
+                    <Home className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span className="hidden sm:inline">Kembali ke katalog</span>
+                  </Link>
+                </header>                <div className="p-4 sm:p-6">{children}</div>
               </main>
             </div>
           </>

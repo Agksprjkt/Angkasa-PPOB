@@ -115,6 +115,13 @@ export const products = sqliteTable(
     name: text('name').notNull(),
     category: text('category').$type<ProductCategory>().notNull(),
     operator: text('operator').notNull(),
+    // Digiflazz groups one brand into several series ("type" in their price list),
+    // e.g. XL -> FlexMax / Xtra Combo Flex / Combo Lite.
+    variant: text('variant'),
+    variantSource: text('variantSource')
+      .$type<'sync' | 'manual'>()
+      .notNull()
+      .default('sync'),
     description: text('description').notNull().default(''),
     basePrice: integer('basePrice').notNull(),
     sellPriceUser: integer('sellPriceUser').notNull(),
@@ -127,10 +134,83 @@ export const products = sqliteTable(
   },
   (table) => [
     index('products_category_status_idx').on(table.category, table.status),
+    index('products_variant_idx').on(table.category, table.operator, table.variant),
     check('products_prices_nonnegative', sql`
       ${table.basePrice} >= 0
       AND ${table.sellPriceUser} >= 0
       AND ${table.sellPriceAgent} >= 0
+    `),
+  ],
+);
+
+export const promotionalBanners = sqliteTable(
+  'promotional_banners',
+  {
+    id: text('id').primaryKey(),
+    title: text('title').notNull(),
+    description: text('description').notNull().default(''),
+    imageUrl: text('imageUrl').notNull(),
+    targetPath: text('targetPath').notNull(),
+    buttonLabel: text('buttonLabel').notNull().default('Lihat Promo'),
+    sortOrder: integer('sortOrder').notNull().default(0),
+    startsAt: integer('startsAt', { mode: 'timestamp_ms' }),
+    endsAt: integer('endsAt', { mode: 'timestamp_ms' }),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(false),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    index('promotional_banners_enabled_sort_idx').on(table.enabled, table.sortOrder),
+    check('promotional_banners_valid_schedule', sql`
+      ${table.startsAt} IS NULL OR ${table.endsAt} IS NULL OR ${table.startsAt} < ${table.endsAt}
+    `),
+  ],
+);
+
+export const featuredProducts = sqliteTable(
+  'featured_products',
+  {
+    id: text('id').primaryKey(),
+    category: text('category').notNull(),
+    operator: text('operator').notNull(),
+    sortOrder: integer('sortOrder').notNull().default(0),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    uniqueIndex('featured_products_provider_idx').on(table.category, table.operator),
+    index('featured_products_enabled_sort_idx').on(table.enabled, table.sortOrder),
+  ],
+);
+
+export const flashSaleOffers = sqliteTable(
+  'flash_sale_offers',
+  {
+    id: text('id').primaryKey(),
+    productId: text('productId')
+      .notNull()
+      .references(() => products.id, { onDelete: 'restrict' }),
+    title: text('title').notNull(),
+    salePrice: integer('salePrice').notNull(),
+    startsAt: integer('startsAt', { mode: 'timestamp_ms' }).notNull(),
+    endsAt: integer('endsAt', { mode: 'timestamp_ms' }).notNull(),
+    quotaLimit: integer('quotaLimit'),
+    quantitySold: integer('quantitySold').notNull().default(0),
+    quantityReserved: integer('quantityReserved').notNull().default(0),
+    status: text('status').$type<'draft' | 'active' | 'paused'>().notNull().default('draft'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    index('flash_sale_offers_product_schedule_idx').on(table.productId, table.startsAt, table.endsAt),
+    index('flash_sale_offers_status_schedule_idx').on(table.status, table.startsAt, table.endsAt),
+    check('flash_sale_offers_positive_price', sql`${table.salePrice} > 0`),
+    check('flash_sale_offers_valid_schedule', sql`${table.startsAt} < ${table.endsAt}`),
+    check('flash_sale_offers_valid_quota', sql`
+      ${table.quantitySold} >= 0
+      AND ${table.quantityReserved} >= 0
+      AND (${table.quotaLimit} IS NULL OR ${table.quotaLimit} >= ${table.quantitySold} + ${table.quantityReserved})
     `),
   ],
 );
@@ -189,6 +269,8 @@ export const invoices = sqliteTable(
     sn: text('sn'),
     qrCodeUrl: text('qrCodeUrl'),
     qrString: text('qrString'),
+    // Amount the buyer must actually transfer; Qrisly adds a unique code.
+    payableAmount: integer('payableAmount'),
     providerReference: text('providerReference').unique(),
     idempotencyKey: text('idempotencyKey').unique(),
     guestAccessTokenHash: text('guestAccessTokenHash'),
@@ -265,6 +347,31 @@ export const transactions = sqliteTable(
   ],
 );
 
+export const flashSaleReservations = sqliteTable(
+  'flash_sale_reservations',
+  {
+    id: text('id').primaryKey(),
+    offerId: text('offerId')
+      .notNull()
+      .references(() => flashSaleOffers.id, { onDelete: 'restrict' }),
+    invoiceId: text('invoiceId').references(() => invoices.id, { onDelete: 'restrict' }),
+    transactionId: text('transactionId').references(() => transactions.id, { onDelete: 'restrict' }),
+    status: text('status').$type<'reserved' | 'consumed' | 'released'>().notNull(),
+    expiresAt: integer('expiresAt', { mode: 'timestamp_ms' }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    uniqueIndex('flash_sale_reservations_invoice_unique').on(table.invoiceId),
+    uniqueIndex('flash_sale_reservations_transaction_unique').on(table.transactionId),
+    index('flash_sale_reservations_offer_status_idx').on(table.offerId, table.status),
+    check('flash_sale_reservations_single_order', sql`
+      (${table.invoiceId} IS NOT NULL AND ${table.transactionId} IS NULL)
+      OR (${table.invoiceId} IS NULL AND ${table.transactionId} IS NOT NULL)
+    `),
+  ],
+);
+
 export const balanceLedger = sqliteTable(
   'balance_ledger',
   {
@@ -302,7 +409,7 @@ export const deposits = sqliteTable(
       .references(() => users.id, { onDelete: 'restrict' }),
     amount: integer('amount').notNull(),
     type: text('type')
-      .$type<'bank_transfer' | 'static_qris' | 'qrisly'>()
+      .$type<'bank_transfer' | 'ewallet' | 'static_qris' | 'qrisly'>()
       .notNull(),
     paymentMethodId: text('paymentMethodId'),
     paymentMethodLabel: text('paymentMethodLabel'),
@@ -310,6 +417,8 @@ export const deposits = sqliteTable(
     proofUrl: text('proofUrl').notNull(),
     providerReference: text('providerReference').unique(),
     qrString: text('qrString'),
+    // Amount the payer must actually transfer; Qrisly adds a unique code.
+    payableAmount: integer('payableAmount'),
     expiresAt: integer('expiresAt', { mode: 'timestamp_ms' }),
     status: text('status')
       .$type<'pending' | 'approved' | 'rejected'>()
@@ -335,7 +444,7 @@ export const paymentMethods = sqliteTable(
   'payment_methods',
   {
     id: text('id').primaryKey(),
-    type: text('type').$type<'bank_transfer' | 'static_qris'>().notNull(),
+    type: text('type').$type<'bank_transfer' | 'ewallet' | 'static_qris'>().notNull(),
     label: text('label').notNull(),
     bankName: text('bankName'),
     accountNumber: text('accountNumber'),
@@ -350,7 +459,7 @@ export const paymentMethods = sqliteTable(
     index('payment_methods_enabled_idx').on(table.enabled),
     check(
       'payment_methods_required_fields',
-      sql`(${table.type} = 'bank_transfer' AND ${table.bankName} IS NOT NULL AND ${table.accountNumber} IS NOT NULL AND ${table.accountHolder} IS NOT NULL) OR (${table.type} = 'static_qris' AND ${table.qrImageFile} IS NOT NULL)`,
+      sql`((${table.type} = 'bank_transfer' OR ${table.type} = 'ewallet') AND ${table.bankName} IS NOT NULL AND ${table.accountNumber} IS NOT NULL AND ${table.accountHolder} IS NOT NULL) OR (${table.type} = 'static_qris' AND ${table.qrImageFile} IS NOT NULL)`,
     ),
   ],
 );
@@ -389,11 +498,24 @@ export const storeSettings = sqliteTable('store_settings', {
   description: text('description').notNull().default(''),
   supportPhone: text('supportPhone').notNull().default(''),
   logoFile: text('logoFile'),
+  iconFile: text('iconFile'),
+  faviconFile: text('faviconFile'),
+  // JSON array of { type, label, value }. Small and always read together with
+  // the profile, so a separate table would only add joins.
+  socialLinks: text('socialLinks').notNull().default('[]'),
   seoTitle: text('seoTitle').notNull().default(''),
   seoDescription: text('seoDescription').notNull().default(''),
   googleSiteVerification: text('googleSiteVerification').notNull().default(''),
   bingSiteVerification: text('bingSiteVerification').notNull().default(''),
   indexNowKey: text('indexNowKey'),
+  updatedAt: updatedAt(),
+});
+
+export const legalDocuments = sqliteTable('legal_documents', {
+  id: text('id').primaryKey(),
+  title: text('title').notNull(),
+  content: text('content').notNull().default(''),
+  updatedBy: text('updatedBy'),
   updatedAt: updatedAt(),
 });
 

@@ -34,13 +34,9 @@ async function assertProviderAccepted(response: Response, provider: string) {
   }
 }
 
-export async function sendWhatsAppOtp(phoneNumber: string, code: string) {
-  const [config, storeSettings] = await Promise.all([
-    getWhatsAppConfig(),
-    getStoreSettings(),
-  ]);
+export async function sendWhatsAppMessage(phoneNumber: string, message: string) {
+  const config = await getWhatsAppConfig();
   const provider = config.provider as WhatsAppProvider | undefined;
-  const message = `Kode verifikasi ${storeSettings.storeName}: ${code}. Berlaku 5 menit. Jangan bagikan kode ini kepada siapa pun.`;
   const signal = AbortSignal.timeout(10_000);
 
   if (provider === 'fonnte') {
@@ -78,6 +74,23 @@ export async function sendWhatsAppOtp(phoneNumber: string, code: string) {
   }
 
   throw new Error(
-    'Set WHATSAPP_PROVIDER to either "fonnte" or "openwa" before sending OTPs',
+    'Set WHATSAPP_PROVIDER to either "fonnte" or "openwa" before sending WhatsApp messages',
   );
+}
+
+export async function sendWhatsAppOtp(phoneNumber: string, code: string) {
+  const storeSettings = await getStoreSettings();
+  const message = `Kode verifikasi ${storeSettings.storeName}: ${code}. Berlaku 5 menit. Jangan bagikan kode ini kepada siapa pun.`;
+  await sendWhatsAppMessage(phoneNumber, message);
+}
+
+export async function sendWhatsAppRecoveryOtp(
+  purpose: 'password' | 'pin',
+  phoneNumber: string,
+  code: string,
+) {
+  const storeSettings = await getStoreSettings();
+  const label = purpose === 'password' ? 'kata sandi' : 'PIN transaksi';
+  const message = `Kode reset ${label} ${storeSettings.storeName}: ${code}. Berlaku 5 menit. Abaikan pesan ini bila Anda tidak memintanya.`;
+  await sendWhatsAppMessage(phoneNumber, message);
 }

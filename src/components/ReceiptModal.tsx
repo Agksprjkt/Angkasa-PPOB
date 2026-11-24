@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import type { Transaction } from '@/types/ppob';
 import { DEFAULT_STORE_NAME } from '@/lib/store-branding';
+import StoreLogo from '@/components/StoreLogo';
 import {
   X,
   Printer,
@@ -368,19 +369,10 @@ export default function ReceiptModal({ transaction, onClose }: ReceiptModalProps
         {/* Printable Struk Body */}
         <div className="p-6 overflow-y-auto print:p-0 print:m-0" id="receipt-print-area">
           <div className="text-center pb-4 border-b border-dashed border-slate-300">
-            {storeIdentity.logoUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={storeIdentity.logoUrl}
-                alt={storeIdentity.storeName}
-                onError={() => setStoreIdentity((current) => ({ ...current, logoUrl: null }))}
-                className="mx-auto mb-2 max-h-14 max-w-48 object-contain"
-              />
-            ) : (
-              <h2 className="mb-2 text-base font-bold tracking-tight text-slate-900">
-                {storeIdentity.storeName}
-              </h2>
-            )}
+            <StoreLogo
+              imageClassName="mx-auto mb-2 max-h-14 max-w-48"
+              textClassName="mb-2 block text-base font-bold tracking-tight text-slate-900"
+            />
             <p className="text-[11px] text-slate-500">
               {transaction.status === 'success'
                 ? 'Bukti Pembayaran Transaksi Resmi'

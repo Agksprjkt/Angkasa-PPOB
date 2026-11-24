@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'node:crypto';
+import { and, eq } from 'drizzle-orm';
 import { isAdministrator } from '@/lib/server/authorization';
 import { getDatabase } from '@/lib/server/db/client';
 import { productProviderSettings } from '@/lib/server/db/schema';
-import { saveUploadedImage } from '@/lib/server/uploaded-image';
+import { deleteUploadedImage, saveUploadedImage } from '@/lib/server/uploaded-image';
 import type { ProductCategory } from '@/types/ppob';
 
 export const runtime = 'nodejs';
@@ -17,6 +18,50 @@ const categories: ProductCategory[] = [
   'ewallet',
   'game',
 ];
+
+export async function DELETE(request: NextRequest) {
+  if (!(await isAdministrator(request.headers))) {
+    return NextResponse.json({ error: 'FORBIDDEN' }, { status: 403 });
+  }
+  const params = request.nextUrl.searchParams;
+  const category = params.get('category');
+  const operator = params.get('operator');
+  const kind = params.get('kind');
+  if (
+    typeof category !== 'string' || !categories.includes(category as ProductCategory) ||
+    typeof operator !== 'string' || !operator.trim() || operator.length > 200 ||
+    (kind !== 'icon' && kind !== 'cover')
+  ) {
+    return NextResponse.json({ error: 'INVALID_PROVIDER_ASSET' }, { status: 400 });
+  }
+
+  const column = kind === 'icon' ? 'iconUrl' : 'coverUrl';
+  try {
+    const [existing] = await getDatabase()
+      .select()
+      .from(productProviderSettings)
+      .where(and(
+        eq(productProviderSettings.category, category as ProductCategory),
+        eq(productProviderSettings.operator, operator.trim()),
+      ))
+      .limit(1);
+    const currentUrl = existing?.[column] ?? null;
+    if (existing) {
+      await getDatabase()
+        .update(productProviderSettings)
+        .set({ [column]: null, updatedAt: new Date() })
+        .where(eq(productProviderSettings.id, existing.id));
+    }
+    const filename = currentUrl?.split('/').pop();
+    if (filename) {
+      await deleteUploadedImage('product-providers', decodeURIComponent(filename));
+    }
+    return NextResponse.json({ assetUrl: null });
+  } catch (error) {
+    console.error('[ADMIN_PROVIDER_ASSET_DELETE_FAILED]', error);
+    return NextResponse.json({ error: 'PROVIDER_ASSET_DELETE_FAILED' }, { status: 500 });
+  }
+}
 
 export async function POST(request: NextRequest) {
   if (!(await isAdministrator(request.headers))) {

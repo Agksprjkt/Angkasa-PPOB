@@ -1,4 +1,4 @@
-import { and, asc, eq, isNotNull, lt, or } from 'drizzle-orm';
+import { and, asc, eq, isNotNull, lt, lte, or } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import { isInternalJobAuthorized } from '@/lib/server/internal-job-auth';
 import { getDigiflazzConfig } from '@/lib/server/integration-settings';
@@ -62,6 +62,11 @@ async function runReconciliation() {
           eq(invoices.paymentMethod, 'qrisly'),
           eq(invoices.paymentStatus, 'unpaid'),
           isNotNull(invoices.providerReference),
+        ),
+        and(
+          eq(invoices.paymentMethod, 'qrisly'),
+          eq(invoices.paymentStatus, 'unpaid'),
+          lte(invoices.expiresAt, new Date()),
         ),
         and(
           eq(invoices.paymentMethod, 'qrisly'),

@@ -24,6 +24,12 @@ function getEncryptionKey() {
   );
 }
 
+// Shared by integration credentials and system-config secrets. The `name` is the
+// AES-GCM additional authenticated data, so ciphertext cannot be swapped between
+// fields without failing to decrypt.
+export const encryptSecret = encryptIntegrationSetting;
+export const decryptSecret = decryptIntegrationSetting;
+
 export function encryptIntegrationSetting(name: string, value: string) {
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', getEncryptionKey(), iv);

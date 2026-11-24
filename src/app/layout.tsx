@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next';
+import Script from 'next/script';
 import './globals.css';
 import { PPOBProvider } from '@/context/PPOBContext';
 import ToastContainer from '@/components/ToastContainer';
@@ -11,9 +12,15 @@ export async function generateMetadata(): Promise<Metadata> {
   const settings = await getStoreSettings();
   const defaultDescription =
     'Platform PPOB Lengkap & Cepat. Beli pulsa reguler, paket kuota data, token listrik PLN, dan bayar tagihan.';
-  const icon = settings.logoFile
-    ? `/api/store-assets/${encodeURIComponent(settings.logoFile)}`
-    : '/icons/icon.svg';
+  // Each asset has its own job: favicon is the browser tab, icon is the installed
+  // app, logo is the header. Fall back down the chain so a single upload still
+  // improves everything.
+  const iconFile = settings.iconFile ?? settings.logoFile;
+  const faviconFile = settings.faviconFile ?? iconFile;
+  const assetUrl = (file: string | null) =>
+    file ? `/api/store-assets/${encodeURIComponent(file)}` : null;
+  const icon = assetUrl(iconFile) ?? '/icons/icon-192.png';
+  const favicon = assetUrl(faviconFile) ?? '/icons/icon.svg';
   return {
     metadataBase: new URL(process.env.BETTER_AUTH_URL ?? 'http://localhost:3000'),
     title: settings.seoTitle || settings.storeName,
@@ -30,12 +37,16 @@ export async function generateMetadata(): Promise<Metadata> {
       statusBarStyle: 'black-translucent',
       title: settings.storeName,
     },
-    icons: { icon, apple: icon },
+    icons: {
+      icon: favicon,
+      shortcut: favicon,
+      apple: icon,
+    },
   };
 }
 
 export const viewport: Viewport = {
-  themeColor: '#0F2C59',
+  themeColor: '#FFFFFF',
   width: 'device-width',
   initialScale: 1,
   maximumScale: 5,
@@ -47,7 +58,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="id">
+    <html lang="id" className="liquid-theme" data-theme="light" suppressHydrationWarning>
       <head>
         <link rel="manifest" href="/api/manifest" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -59,7 +70,26 @@ export default function RootLayout({
         />
         <meta name="apple-mobile-web-app-capable" content="yes" />
       </head>
-      <body className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
+      <body className="min-h-screen flex flex-col text-slate-900">
+        <Script id="ppob-theme-init" strategy="beforeInteractive">
+          {`
+            (function () {
+              try {
+                var saved = window.localStorage.getItem('ppob-theme');
+                var mode = saved === 'light' || saved === 'dark'
+                  ? saved
+                  : window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+                document.documentElement.dataset.theme = mode;
+                document.documentElement.style.colorScheme = mode;
+              } catch (error) {}
+            })();
+          `}
+        </Script>
+        <div aria-hidden="true" className="liquid-backdrop">
+          <span className="liquid-orb liquid-orb-one" />
+          <span className="liquid-orb liquid-orb-two" />
+          <span className="liquid-orb liquid-orb-three" />
+        </div>
         <PPOBProvider>
           {children}
           <ToastContainer />

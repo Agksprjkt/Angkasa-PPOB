@@ -5,12 +5,29 @@ import { randomUUID } from 'node:crypto';
 import { createDigiflazzTransaction } from '@/lib/digiflazz';
 import { createOrderCode } from '@/lib/order-codes';
 import { getDatabase } from '@/lib/server/db/client';
-import { balanceLedger, products, transactions, users } from '@/lib/server/db/schema';
+import {
+  balanceLedger,
+  flashSaleReservations,
+  products,
+  transactions,
+  users,
+} from '@/lib/server/db/schema';
 import { applyBalanceDelta } from '@/lib/server/wallet';
 import { getDigiflazzConfig } from '@/lib/server/integration-settings';
 import { validateOrderDestination } from '@/lib/order-input-validation';
+import {
+  buildDigiflazzCustomerNo,
+  mapDigiflazzStatus,
+  readDigiflazzTransactionResponse,
+} from '@/lib/digiflazz-protocol';
 import { isValidTransactionPin } from '@/lib/server/transaction-pin-core';
 import { verifyAndRecordTransactionPin } from '@/lib/server/transaction-pin';
+import {
+  createFlashSaleReservation,
+  releaseFlashSaleCapacity,
+  reserveFlashSaleCapacity,
+  settleFlashSaleReservation,
+} from '@/lib/server/flash-sales';
 
 type OrderServiceBody = {
   error?: string;
@@ -26,6 +43,8 @@ export type CreateBalanceOrderInput = {
   customerName?: string;
   serverZoneId?: string;
   transactionPin?: string;
+  flashSaleOfferId?: string;
+  flashSalePriceExpected?: number;
   user: {
     id: string;
     phoneNumber?: string | null;
@@ -37,31 +56,6 @@ export type CreateBalanceOrderResult = {
   status: number;
   body: OrderServiceBody;
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isProviderResponse(
-  value: unknown,
-): value is {
-  data: {
-    ref_id: string;
-    status: string;
-    message: string;
-    rc: string;
-    sn?: string;
-  };
-} {
-  if (!isRecord(value) || !isRecord(value.data)) return false;
-  return (
-    typeof value.data.ref_id === 'string' &&
-    typeof value.data.status === 'string' &&
-    typeof value.data.message === 'string' &&
-    typeof value.data.rc === 'string' &&
-    (value.data.sn === undefined || typeof value.data.sn === 'string')
-  );
-}
 
 async function getDatabaseBalance(userId: string) {
   const rows = await getDatabase()
@@ -144,15 +138,24 @@ export async function createBalanceOrder(
     return { status: 503, body: { error: 'PRODUCTION_TRANSACTIONS_DISABLED' } };
   }
 
-  const price = input.user.role === 'agent'
+  const regularPrice = input.user.role === 'agent'
     ? product.sellPriceAgent
     : product.sellPriceUser;
   if (
-    !Number.isSafeInteger(price) ||
-    price <= 0 ||
+    !Number.isSafeInteger(regularPrice) ||
+    regularPrice <= 0 ||
     !Number.isSafeInteger(product.basePrice)
   ) {
     return { status: 503, body: { error: 'INVALID_PRODUCT_PRICE' } };
+  }
+  if (
+    Boolean(input.flashSaleOfferId) !== (input.flashSalePriceExpected !== undefined) ||
+    (
+      input.flashSalePriceExpected !== undefined &&
+      (!Number.isSafeInteger(input.flashSalePriceExpected) || input.flashSalePriceExpected <= 0)
+    )
+  ) {
+    return { status: 400, body: { error: 'INVALID_FLASH_SALE' } };
   }
 
   const referenceId = createOrderCode('PAY');
@@ -162,6 +165,7 @@ export async function createBalanceOrder(
   const fullDestination = serverZoneId
     ? `${destination} (${serverZoneId})`
     : destination;
+  let price = regularPrice;
 
   let createdTransaction:
     | (typeof transactions.$inferSelect)
@@ -177,6 +181,12 @@ export async function createBalanceOrder(
         .then((rows) => rows[0]);
 
       if (existing) {
+        const existingReservation = await tx
+          .select({ offerId: flashSaleReservations.offerId })
+          .from(flashSaleReservations)
+          .where(eq(flashSaleReservations.transactionId, existing.id))
+          .limit(1)
+          .then((rows) => rows[0]);
         const legacyGameDestination = existing.category === 'game' && !existing.serverZoneId
           ? existing.destination.match(/^(.*) \(([^()]*)\)$/)
           : null;
@@ -190,23 +200,47 @@ export async function createBalanceOrder(
         if (
           existing.userId !== input.user.id ||
           existing.productId !== product.id ||
-          !sameDestination
+          !sameDestination ||
+          existingReservation?.offerId !== (input.flashSaleOfferId ?? undefined)
         ) {
           return { conflict: true as const, transaction: existing };
         }
         return { conflict: false as const, transaction: existing, duplicate: true };
       }
 
+      const now = new Date();
+      let saleOfferId: string | null = null;
+      let orderPrice = regularPrice;
+      if (input.flashSaleOfferId) {
+        const expectedPrice = input.flashSalePriceExpected;
+        if (expectedPrice === undefined) {
+          return { flashSaleError: 'FLASH_SALE_UNAVAILABLE' as const };
+        }
+        const reservation = await reserveFlashSaleCapacity(tx, {
+          offerId: input.flashSaleOfferId,
+          productId: product.id,
+          expectedPrice,
+          now,
+          role: input.user.role === 'agent' ? 'agent' : input.user.role === 'admin' ? 'admin' : 'user',
+        });
+        if ('error' in reservation) {
+          return { flashSaleError: reservation.error };
+        }
+        saleOfferId = reservation.offerId;
+        orderPrice = reservation.salePrice;
+      }
+
       const updatedUsers = await tx
         .update(users)
         .set({
-          balance: sql`${users.balance} - ${price}`,
+          balance: sql`${users.balance} - ${orderPrice}`,
           updatedAt: new Date(),
         })
-        .where(and(eq(users.id, input.user.id), gte(users.balance, price)))
+        .where(and(eq(users.id, input.user.id), gte(users.balance, orderPrice)))
         .returning({ balance: users.balance });
 
       if (!updatedUsers[0]) {
+        if (saleOfferId) await releaseFlashSaleCapacity(tx, saleOfferId, now);
         return { insufficientBalance: true as const };
       }
 
@@ -225,8 +259,8 @@ export async function createBalanceOrder(
           destination,
           serverZoneId,
           customerName: input.customerName,
-          amount: price,
-          profit: price - product.basePrice,
+          amount: orderPrice,
+          profit: orderPrice - product.basePrice,
           status: 'pending',
           paymentMethod: 'balance',
           vendorResponse: {
@@ -236,9 +270,7 @@ export async function createBalanceOrder(
             rawTime: new Date().toISOString(),
             reconciliation: {
               buyerSkuCode: product.vendorCode,
-              customerNo: serverZoneId
-                ? `${destination}.${serverZoneId}`
-                : destination,
+              customerNo: buildDigiflazzCustomerNo(destination, serverZoneId).customerNo,
               mode,
             },
           },
@@ -250,10 +282,11 @@ export async function createBalanceOrder(
         await tx
           .update(users)
           .set({
-            balance: sql`${users.balance} + ${price}`,
+            balance: sql`${users.balance} + ${orderPrice}`,
             updatedAt: new Date(),
           })
           .where(eq(users.id, input.user.id));
+        if (saleOfferId) await releaseFlashSaleCapacity(tx, saleOfferId, now);
 
         const raced = await tx
           .select()
@@ -262,6 +295,12 @@ export async function createBalanceOrder(
           .limit(1)
           .then((rows) => rows[0]);
         if (!raced) throw new Error('Idempotency conflict without an existing order');
+        const racedReservation = await tx
+          .select({ offerId: flashSaleReservations.offerId })
+          .from(flashSaleReservations)
+          .where(eq(flashSaleReservations.transactionId, raced.id))
+          .limit(1)
+          .then((rows) => rows[0]);
         const legacyGameDestination = raced.category === 'game' && !raced.serverZoneId
           ? raced.destination.match(/^(.*) \(([^()]*)\)$/)
           : null;
@@ -276,30 +315,41 @@ export async function createBalanceOrder(
           conflict:
             raced.userId !== input.user.id ||
             raced.productId !== product.id ||
-            !sameDestination,
+            !sameDestination ||
+            racedReservation?.offerId !== (input.flashSaleOfferId ?? undefined),
           transaction: raced,
           duplicate: true,
         };
       }
 
       const balanceAfter = updatedUsers[0].balance;
-      const balanceBefore = balanceAfter + price;
+      const balanceBefore = balanceAfter + orderPrice;
       await tx.insert(balanceLedger).values({
         id: randomUUID(),
         idempotencyKey: `debit:${input.idempotencyKey}`,
         userId: input.user.id,
         type: 'debit',
-        amount: price,
+        amount: orderPrice,
         balanceBefore,
         balanceAfter,
         reference: referenceId,
         note: `Pembelian ${product.name} ke ${fullDestination}`,
       });
+      if (saleOfferId) {
+        await createFlashSaleReservation(
+          tx,
+          saleOfferId,
+          { transactionId: inserted[0].id },
+          null,
+          now,
+        );
+      }
 
       return {
         conflict: false as const,
         transaction: inserted[0],
         duplicate: false,
+        price: orderPrice,
       };
     });
 
@@ -307,11 +357,16 @@ export async function createBalanceOrder(
       return { status: 409, body: { error: 'INSUFFICIENT_BALANCE' } };
     }
 
+    if ('flashSaleError' in result) {
+      return { status: 409, body: { error: result.flashSaleError } };
+    }
+
     if ('conflict' in result && result.conflict) {
       return { status: 409, body: { error: 'IDEMPOTENCY_KEY_REUSED' } };
     }
 
     createdTransaction = result.transaction;
+    if ('price' in result && typeof result.price === 'number') price = result.price;
     if (result.duplicate) {
       const balance = await getDatabaseBalance(input.user.id);
       return {
@@ -332,17 +387,13 @@ export async function createBalanceOrder(
       { username, apiKey, mode },
       {
         buyerSkuCode: product.vendorCode,
-        customerNo: serverZoneId
-          ? `${destination}.${serverZoneId}`
-          : destination,
+        customerNo: buildDigiflazzCustomerNo(destination, serverZoneId).customerNo,
         refId: referenceId,
       },
     );
 
-    if (
-      !isProviderResponse(providerResponse) ||
-      providerResponse.data.ref_id !== referenceId
-    ) {
+    const response = readDigiflazzTransactionResponse(providerResponse);
+    if (!response || response.refId !== referenceId) {
       return {
         status: 202,
         body: {
@@ -352,14 +403,7 @@ export async function createBalanceOrder(
       };
     }
 
-    const response = providerResponse.data;
-    const providerStatus = response.status.toLowerCase();
-    const status =
-      providerStatus === 'sukses' && response.rc === '00'
-        ? 'success'
-        : providerStatus === 'gagal'
-          ? 'failed'
-          : 'pending';
+    const status = mapDigiflazzStatus(response.status, response.rc);
     const vendorResponse = {
       code: response.rc,
       message: response.message.slice(0, 500),
@@ -387,7 +431,6 @@ export async function createBalanceOrder(
           });
           if ('error' in walletResult) throw new Error(walletResult.error);
         }
-
         const updated = await tx
           .update(transactions)
           .set({ status: 'failed', vendorResponse, updatedAt: new Date() })
@@ -395,20 +438,37 @@ export async function createBalanceOrder(
           .returning()
           .then((rows) => rows[0]);
         if (!updated) throw new Error('Failed to update order status');
+        await settleFlashSaleReservation(
+          tx,
+          { transactionId: updated.id },
+          'released',
+          new Date(),
+        );
         return updated;
       });
     } else {
-      createdTransaction = await getDatabase()
-        .update(transactions)
-        .set({
-          status,
-          sn: status === 'success' ? response.sn ?? null : null,
-          vendorResponse,
-          updatedAt: new Date(),
-        })
-        .where(eq(transactions.id, createdTransaction.id))
-        .returning()
-        .then((rows) => rows[0]);
+      createdTransaction = await getDatabase().transaction(async (tx) => {
+        const updated = await tx
+          .update(transactions)
+          .set({
+            status,
+            sn: status === 'success' ? response.sn ?? null : null,
+            vendorResponse,
+            updatedAt: new Date(),
+          })
+          .where(eq(transactions.id, createdTransaction!.id))
+          .returning()
+          .then((rows) => rows[0]);
+        if (updated && status === 'success') {
+          await settleFlashSaleReservation(
+            tx,
+            { transactionId: updated.id },
+            'consumed',
+            new Date(),
+          );
+        }
+        return updated;
+      });
     }
 
     const balance = await getDatabaseBalance(input.user.id);

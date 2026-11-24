@@ -2,6 +2,7 @@ import 'server-only';
 
 export {
   hashOrderLookupValue,
+  maskOrderLookupDestination,
   matchesOrderLookupHash,
   normalizeOrderLookupIdentifier,
   type OrderLookupIdentifier,

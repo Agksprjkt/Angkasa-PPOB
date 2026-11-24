@@ -97,9 +97,37 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # TLS terminator. Opt-in via the `tls` profile so a local or internal-only
+  # deployment does not try to obtain a certificate: `docker compose --profile tls up -d`.
+  # It reaches the app over the default network; the app port stays bound to host
+  # loopback so nothing is exposed directly.
+  caddy:
+    image: caddy:2-alpine
+    profiles:
+      - tls
+    environment:
+      PPOB_DOMAIN: ${PPOB_DOMAIN:?Set PPOB_DOMAIN in .env to the public hostname}
+      PPOB_ACME_EMAIL: ${PPOB_ACME_EMAIL:-}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - default
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   ppob-data:
   postgres-data:
+  caddy-data:
+  caddy-config:
 
 secrets:
   database_url:

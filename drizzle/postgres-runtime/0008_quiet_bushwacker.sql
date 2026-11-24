@@ -1,0 +1,2 @@
+ALTER TABLE "payment_methods" DROP CONSTRAINT "payment_methods_required_fields";--> statement-breakpoint
+ALTER TABLE "payment_methods" ADD CONSTRAINT "payment_methods_required_fields" CHECK ((("payment_methods"."type" = 'bank_transfer' OR "payment_methods"."type" = 'ewallet') AND "payment_methods"."bankName" IS NOT NULL AND "payment_methods"."accountNumber" IS NOT NULL AND "payment_methods"."accountHolder" IS NOT NULL) OR ("payment_methods"."type" = 'static_qris' AND "payment_methods"."qrImageFile" IS NOT NULL));

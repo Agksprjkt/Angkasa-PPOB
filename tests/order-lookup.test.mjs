@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   hashOrderLookupValue,
+  maskOrderLookupDestination,
   matchesOrderLookupHash,
   normalizeOrderLookupIdentifier,
 } from '../src/lib/server/order-lookup-core.ts';
@@ -16,6 +17,13 @@ test('normalizes phone numbers and order codes without accepting arbitrary ident
     value: 'INV-ABCD-1234',
   });
   assert.equal(normalizeOrderLookupIdentifier('not-an-identifier'), null);
+});
+
+test('masks the destination shown by the public lookup', () => {
+  assert.equal(maskOrderLookupDestination('081234567890'), '0812****7890');
+  assert.equal(maskOrderLookupDestination('231'), '***');
+  assert.equal(maskOrderLookupDestination('1234567'), '123****');
+  assert.equal(maskOrderLookupDestination('12345678'), '1234***5678');
 });
 
 test('uses purpose-bound hashes for OTP and access grants', () => {
