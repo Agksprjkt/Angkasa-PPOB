@@ -37,11 +37,11 @@ export async function GET(request: NextRequest) {
     const db = getDatabase();
     const selectTransactionStats = () => db.select({
       totalTransactions: count(),
-      successfulCount: sql<number>`coalesce(sum(case when ${transactions.status} = 'success' then 1 else 0 end), 0)`,
-      failedCount: sql<number>`coalesce(sum(case when ${transactions.status} = 'failed' then 1 else 0 end), 0)`,
-      pendingCount: sql<number>`coalesce(sum(case when ${transactions.status} = 'pending' then 1 else 0 end), 0)`,
-      totalRevenue: sql<number>`coalesce(sum(case when ${transactions.status} = 'success' then ${transactions.amount} else 0 end), 0)`,
-      totalProfit: sql<number>`coalesce(sum(case when ${transactions.status} = 'success' then ${transactions.profit} else 0 end), 0)`,
+      successfulCount: sql<number>`coalesce(sum(case when ${transactions.status} = 'success' then 1 else 0 end), 0)`.mapWith(Number),
+      failedCount: sql<number>`coalesce(sum(case when ${transactions.status} = 'failed' then 1 else 0 end), 0)`.mapWith(Number),
+      pendingCount: sql<number>`coalesce(sum(case when ${transactions.status} = 'pending' then 1 else 0 end), 0)`.mapWith(Number),
+      totalRevenue: sql<number>`coalesce(sum(case when ${transactions.status} = 'success' then ${transactions.amount} else 0 end), 0)`.mapWith(Number),
+      totalProfit: sql<number>`coalesce(sum(case when ${transactions.status} = 'success' then ${transactions.profit} else 0 end), 0)`.mapWith(Number),
     }).from(transactions);
     const [
       transactionStats,
@@ -68,14 +68,15 @@ export async function GET(request: NextRequest) {
             )),
         db.select({
           count: count(),
-          amount: sql<number>`coalesce(sum(${deposits.amount}), 0)`,
+          amount: sql<number>`coalesce(sum(${deposits.amount}), 0)`.mapWith(Number),
         }).from(deposits).where(eq(deposits.status, 'pending')),
         db.select({ count: count() }).from(users),
         db.select({ count: count() }).from(products).where(eq(products.status, 'active')),
         db.select({
           count: count(),
-          overdueCount: sql<number>`coalesce(sum(case when ${transactions.createdAt} < ${sqlTimestamp(new Date(now - 5 * 60 * 1000))} then 1 else 0 end), 0)`,
-          // Postgres returns a Date, SQLite an epoch number; the cast covers both.
+          overdueCount: sql<number>`coalesce(sum(case when ${transactions.createdAt} < ${sqlTimestamp(new Date(now - 5 * 60 * 1000))} then 1 else 0 end), 0)`.mapWith(Number),
+          // Postgres returns a Date, SQLite an epoch number; both are normalised
+          // to ISO in the response below.
           oldestCreatedAt: sql<number | Date | null>`min(${transactions.createdAt})`,
         }).from(transactions).where(eq(transactions.status, 'pending')),
         db
@@ -112,9 +113,17 @@ export async function GET(request: NextRequest) {
           .limit(10),
       ]);
 
+    // Every aggregate above is mapped with mapWith(Number) or Drizzle's count(),
+    // which already coerces. Postgres would otherwise return numeric as a string.
+    const stats = transactionStats[0];
+    const previous = previousTransactionStats?.[0] ?? null;
     return NextResponse.json({
-      ...transactionStats[0],
-      previousPeriodStats: previousTransactionStats?.[0] ?? null,
+      totalTransactions: stats?.totalTransactions ?? 0,
+      successfulCount: stats?.successfulCount ?? 0,
+      failedCount: stats?.failedCount ?? 0,
+      totalRevenue: stats?.totalRevenue ?? 0,
+      totalProfit: stats?.totalProfit ?? 0,
+      previousPeriodStats: previous ?? null,
       period,
       generatedAt: new Date().toISOString(),
       pendingDepositsCount: pendingDeposits[0]?.count ?? 0,

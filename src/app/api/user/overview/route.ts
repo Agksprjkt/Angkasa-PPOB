@@ -20,10 +20,10 @@ export async function GET(request: NextRequest) {
     const [overview] = await getDatabase()
       .select({
         totalTransactions: count(),
-        successfulTransactions: sql<number>`coalesce(sum(case when ${transactions.status} = 'success' then 1 else 0 end), 0)`,
-        pendingTransactions: sql<number>`coalesce(sum(case when ${transactions.status} = 'pending' then 1 else 0 end), 0)`,
-        failedTransactions: sql<number>`coalesce(sum(case when ${transactions.status} = 'failed' then 1 else 0 end), 0)`,
-        totalSpent: sql<number>`coalesce(sum(case when ${transactions.status} = 'success' then ${transactions.amount} else 0 end), 0)`,
+        successfulTransactions: sql<number>`coalesce(sum(case when ${transactions.status} = 'success' then 1 else 0 end), 0)`.mapWith(Number),
+        pendingTransactions: sql<number>`coalesce(sum(case when ${transactions.status} = 'pending' then 1 else 0 end), 0)`.mapWith(Number),
+        failedTransactions: sql<number>`coalesce(sum(case when ${transactions.status} = 'failed' then 1 else 0 end), 0)`.mapWith(Number),
+        totalSpent: sql<number>`coalesce(sum(case when ${transactions.status} = 'success' then ${transactions.amount} else 0 end), 0)`.mapWith(Number),
       })
       .from(transactions)
       .where(and(

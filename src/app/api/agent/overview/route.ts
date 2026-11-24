@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
         pendingTransactions: count(sql`case when ${transactions.status} = 'pending' then 1 end`),
         successfulProfit: sql<number>`
           coalesce(sum(case when ${transactions.status} = 'success' then ${transactions.profit} else 0 end), 0)
-        `,
+        `.mapWith(Number),
       })
       .from(transactions)
       .where(eq(transactions.userId, session.user.id));

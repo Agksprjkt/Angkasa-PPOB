@@ -92,7 +92,7 @@ export async function PATCH(request: NextRequest) {
 
         if (target.role === 'admin' && role !== 'admin') {
           const admins = await tx
-            .select({ count: sql<number>`count(*)` })
+            .select({ count: sql<number>`count(*)`.mapWith(Number) })
             .from(users)
             .where(eq(users.role, 'admin'))
             .then((rows) => rows[0]?.count ?? 0);
@@ -222,11 +222,11 @@ export async function DELETE(request: NextRequest) {
   try {
     const db = getDatabase();
     const [transactionCount] = await db
-      .select({ total: sql<number>`count(*)` })
+      .select({ total: sql<number>`count(*)`.mapWith(Number) })
       .from(transactions)
       .where(eq(transactions.userId, id));
     const [depositCount] = await db
-      .select({ total: sql<number>`count(*)` })
+      .select({ total: sql<number>`count(*)`.mapWith(Number) })
       .from(deposits)
       .where(eq(deposits.userId, id));
     if (Number(transactionCount?.total ?? 0) > 0 || Number(depositCount?.total ?? 0) > 0) {
