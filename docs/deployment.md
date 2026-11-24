@@ -253,7 +253,10 @@ openssl rand -hex 32 > secrets/postgres_password
 openssl rand -hex 32 > secrets/redis_password
 # The URL must carry the same password as postgres_password, percent-encoded.
 printf 'postgres://ppob:%s@postgres:5432/ppob\n' "$(cat secrets/postgres_password)" > secrets/database_url
-chmod 600 secrets/*
+# 600 is not enough: the app container runs as its own non-root user, so a
+# root- or host-user-owned file is unreadable and startup fails with EACCES.
+# The 700 directory still keeps the values private.
+chmod 644 secrets/*
 ```
 
 Generate `BETTER_AUTH_SECRET` and `PAYMENT_RECONCILER_SECRET` into `.env`:
@@ -272,6 +275,10 @@ PAYMENT_RECONCILER_SECRET=<new random value, at least 32 bytes>
 PPOB_SITE_ADDRESS=<domain>
 PPOB_ACME_EMAIL=<your email>
 ```
+
+`PPOB_SITE_ADDRESS` accepts a comma-separated list, so `example.com, www.example.com`
+serves both names from one Caddy site block. Use `http://<ip>` before DNS is
+ready: Caddy then serves plain HTTP and requests no certificate.
 
 ### 5. Start
 
