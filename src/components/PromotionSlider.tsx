@@ -121,7 +121,7 @@ export default function PromotionSlider() {
           aria-busy="true"
           className="relative isolate overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/55 shadow-[0_24px_70px_-35px_rgba(74,101,178,0.28)] backdrop-blur-2xl"
         >
-          <div className="relative aspect-video w-full">
+          <div className="relative aspect-[1080/424] w-full">
             <div className="absolute inset-0 flex items-center justify-center">
               <CrystalLoader size={72} label="Memuat promosi" />
             </div>
@@ -157,7 +157,7 @@ export default function PromotionSlider() {
         }}
         className="promo-hero relative isolate overflow-hidden rounded-[1.75rem] border border-white/80 bg-gradient-to-br from-white/85 via-white/65 to-sky-50/75 text-slate-900 shadow-[0_24px_70px_-35px_rgba(74,101,178,0.28)] backdrop-blur-2xl"
       >
-        <div className="relative aspect-video w-full">
+        <div className="relative aspect-[1080/424] w-full">
           {hasImage ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img

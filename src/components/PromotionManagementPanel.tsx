@@ -443,7 +443,7 @@ export default function PromotionManagementPanel() {
                 <div className="space-y-2 md:col-span-2">
                   <Label>Gambar banner</Label>
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
-                    <div className="relative flex h-32 w-full max-w-xs items-center justify-center overflow-hidden rounded-lg border border-dashed border-slate-300 bg-slate-50">
+                    <div className="relative flex aspect-[1080/424] w-full max-w-md items-center justify-center overflow-hidden rounded-lg border border-dashed border-slate-300 bg-slate-50">
                       {form.imageUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
@@ -491,7 +491,8 @@ export default function PromotionManagementPanel() {
                     </div>
                   </div>
                   <p className="text-xs text-slate-500">
-                    PNG, JPG, atau WebP, maksimal 5 MB. Disarankan lanskap 16:7.
+                    PNG, JPG, atau WebP, maksimal 5 MB. Gunakan 1080 × 424 px (rasio 2.55:1);
+                    bagian atas/bawah gambar terpotong bila rasionya berbeda.
                   </p>
                 </div>
                 <div className="space-y-2 md:col-span-2">

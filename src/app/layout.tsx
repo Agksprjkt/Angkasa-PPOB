@@ -4,6 +4,7 @@ import './globals.css';
 import { PPOBProvider } from '@/context/PPOBContext';
 import ToastContainer from '@/components/ToastContainer';
 import CookieConsent from '@/components/CookieConsent';
+import ChatSupportButton from '@/components/ChatSupportButton';
 import { getStoreSettings } from '@/lib/server/store-settings';
 
 export const dynamic = 'force-dynamic';
@@ -94,6 +95,7 @@ export default function RootLayout({
           {children}
           <ToastContainer />
           <CookieConsent />
+          <ChatSupportButton />
         </PPOBProvider>
 
         {/* PWA Service Worker Registration Script */}
