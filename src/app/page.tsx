@@ -10,7 +10,6 @@ import PromotionSlider from '@/components/PromotionSlider';
 import StorefrontSections from '@/components/StorefrontSections';
 import ProductCatalog from '@/components/ProductCatalog';
 import StoreFooter from '@/components/StoreFooter';
-import WhatsAppFloat from '@/components/WhatsAppFloat';
 import DirectOrderModal from '@/components/DirectOrderModal';
 import DepositModal from '@/components/DepositModal';
 import AuthModal from '@/components/AuthModal';
@@ -167,10 +166,6 @@ export default function HomePage() {
                       onSelectProduct={handleSelectProduct}
                     />
                   </section>
-
-                  {!isCategoryMenu && supportPhone && (
-                    <WhatsAppFloat phone={supportPhone} storeName={storeName} />
-                  )}
                 </div>
               </div>
           </div>
