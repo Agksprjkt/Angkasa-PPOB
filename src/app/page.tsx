@@ -136,6 +136,7 @@ export default function HomePage() {
           activeTab="home"
           mobileBack={isCategoryMenu}
           backFallback="/"
+          transparentUntilScroll
           pwaInstallPrompt={deferredPrompt}
           onInstallPwa={handleInstallPwa}
         />
@@ -143,7 +144,7 @@ export default function HomePage() {
         <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
           <div className={`space-y-8 animate-fadeIn ${isCategoryMenu ? 'mx-auto max-w-6xl' : ''}`}>
               {!isCategoryMenu && (
-                <div className="mx-auto max-w-6xl">
+                <div className="mx-auto max-w-7xl">
                   <PromotionSlider />
                 </div>
               )}

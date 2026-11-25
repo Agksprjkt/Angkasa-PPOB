@@ -121,7 +121,7 @@ export default function PromotionSlider() {
           aria-busy="true"
           className="relative isolate overflow-hidden rounded-[1.75rem] border border-white/80 bg-white/55 shadow-[0_24px_70px_-35px_rgba(74,101,178,0.28)] backdrop-blur-2xl"
         >
-          <div className="relative aspect-[16/10] w-full sm:aspect-[16/7] lg:min-h-[21rem]">
+          <div className="relative aspect-video w-full">
             <div className="absolute inset-0 flex items-center justify-center">
               <CrystalLoader size={72} label="Memuat promosi" />
             </div>
@@ -157,7 +157,7 @@ export default function PromotionSlider() {
         }}
         className="promo-hero relative isolate overflow-hidden rounded-[1.75rem] border border-white/80 bg-gradient-to-br from-white/85 via-white/65 to-sky-50/75 text-slate-900 shadow-[0_24px_70px_-35px_rgba(74,101,178,0.28)] backdrop-blur-2xl"
       >
-        <div className="relative aspect-[16/10] w-full sm:aspect-[16/7] lg:min-h-[21rem]">
+        <div className="relative aspect-video w-full">
           {hasImage ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -175,11 +175,7 @@ export default function PromotionSlider() {
           )}
           <div
             aria-hidden="true"
-            className={`absolute inset-0 ${
-              hasImage
-                ? 'bg-gradient-to-r from-slate-950/85 via-slate-950/55 to-slate-950/15'
-                : 'bg-gradient-to-br from-white/20 via-transparent to-cyan-100/20'
-            }`}
+            className={`absolute inset-0 ${hasImage ? '' : 'bg-gradient-to-br from-white/20 via-transparent to-cyan-100/20'}`}
           />
 
           <button
@@ -188,7 +184,8 @@ export default function PromotionSlider() {
             aria-label={activeSlide.title ? `${activeSlide.title} — buka` : 'Buka promosi'}
             className="group absolute inset-0 z-10 flex flex-col justify-end p-5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white sm:p-8 lg:justify-center lg:px-12"
           >
-            <div className="max-w-2xl" aria-live="polite">
+            {/* Banner image already carries its own copy, so nothing is drawn on top of it. */}
+            <div className={`max-w-2xl ${hasImage ? 'sr-only' : ''}`} aria-live="polite">
               {activeSlide.title && (
                 <h2 className={`line-clamp-2 max-w-xl text-2xl font-bold leading-tight tracking-tight sm:text-3xl lg:text-4xl ${
                   hasImage ? 'text-white' : 'text-slate-900'
@@ -215,21 +212,25 @@ export default function PromotionSlider() {
           </button>
 
           {slides.length > 1 && (
-            <div className="absolute inset-x-0 bottom-3 z-20 flex items-center justify-center gap-1.5 sm:bottom-4">
-              {slides.map((slide, index) => (
-                <button
-                  key={slide.id}
-                  type="button"
-                  onClick={() => setActiveIndex(index)}
-                  aria-label={`Tampilkan promosi ${index + 1}`}
-                  aria-current={index === activeIndex ? 'true' : undefined}
-                  className={`h-1.5 rounded-full transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${
-                    index === activeIndex
-                      ? `w-6 ${hasImage ? 'bg-white' : 'bg-blue-700'}`
-                      : `w-1.5 ${hasImage ? 'bg-white/55 hover:bg-white/80' : 'bg-slate-400/60 hover:bg-slate-500/80'}`
-                  }`}
-                />
-              ))}
+            <div className="absolute inset-x-0 bottom-3 z-20 flex items-center justify-center sm:bottom-4">
+              <div className={`flex items-center gap-1.5 rounded-full px-2.5 py-1.5 ${
+                hasImage ? 'bg-slate-900/35 backdrop-blur-sm' : 'bg-white/70'
+              }`}>
+                {slides.map((slide, index) => (
+                  <button
+                    key={slide.id}
+                    type="button"
+                    onClick={() => setActiveIndex(index)}
+                    aria-label={`Tampilkan promosi ${index + 1}`}
+                    aria-current={index === activeIndex ? 'true' : undefined}
+                    className={`h-1.5 rounded-full transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${
+                      index === activeIndex
+                        ? `w-6 ${hasImage ? 'bg-white' : 'bg-blue-700'}`
+                        : `w-1.5 ${hasImage ? 'bg-white/60 hover:bg-white/85' : 'bg-slate-400/70 hover:bg-slate-500/80'}`
+                    }`}
+                  />
+                ))}
+              </div>
             </div>
           )}
         </div>

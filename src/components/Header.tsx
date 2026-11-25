@@ -48,6 +48,8 @@ interface HeaderProps {
   mobileMenuMode?: boolean;
   mobileMenuOpen?: boolean;
   onMobileMenuToggle?: () => void;
+  // Mobile-only: header starts transparent and turns into a glass card once scrolled.
+  transparentUntilScroll?: boolean;
   pwaInstallPrompt?: BeforeInstallPromptEvent | null;
   onInstallPwa?: () => void;
 }
@@ -82,6 +84,7 @@ export default function Header({
   mobileMenuMode = false,
   mobileMenuOpen = false,
   onMobileMenuToggle,
+  transparentUntilScroll = false,
   pwaInstallPrompt,
   onInstallPwa,
 }: HeaderProps) {
@@ -96,6 +99,7 @@ export default function Header({
   const [searchQuery, setSearchQuery] = useState('');
   const [searchError, setSearchError] = useState('');
   const [storeIdentity, setStoreIdentity] = useState<StoreIdentity | null>(null);
+  const [isScrolled, setIsScrolled] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const desktopSearchInputRef = useRef<HTMLInputElement>(null);
@@ -169,6 +173,24 @@ export default function Header({
     if (!isDesktopSearchOpen) return;
     desktopSearchInputRef.current?.focus();
   }, [isDesktopSearchOpen]);
+
+  useEffect(() => {
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      setIsScrolled(window.scrollY > 8);
+    };
+    const handleScroll = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(update);
+    };
+    update();
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, []);
 
   useEffect(() => {
     const handlePointerDown = (event: PointerEvent) => {
@@ -251,7 +273,11 @@ export default function Header({
     }`;
 
   return (
-    <header className="liquid-glass-header">
+    <header
+      className="liquid-glass-header"
+      data-transparent={transparentUntilScroll ? 'true' : undefined}
+      data-scrolled={transparentUntilScroll && isScrolled ? 'true' : 'false'}
+    >
       <div
         ref={actionsRef}
         className={`relative mx-auto flex h-14 w-full max-w-7xl items-center justify-between gap-2 px-2.5 sm:h-16 sm:gap-3 sm:px-4 lg:px-6 ${

@@ -451,6 +451,39 @@
   }
 }
 
+/* Opt-in (storefront home, mobile): the header starts transparent over the page
+   background and only becomes a glass card once the page is scrolled. It stays
+   sticky the whole time, so it never overlaps the content below it. */
+@media (max-width: 1023px) {
+  .liquid-glass-header[data-transparent="true"] {
+    transition: background-color 200ms ease, border-color 200ms ease, box-shadow 200ms ease;
+  }
+
+  .liquid-glass-header[data-transparent="true"][data-scrolled="false"] {
+    border-color: transparent;
+    background-color: transparent;
+    background-image: none;
+    box-shadow: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .liquid-glass-header[data-transparent="true"][data-scrolled="false"] :is(.liquid-glass-control, .liquid-glass-control-strong) {
+    border-color: transparent;
+    background-color: transparent;
+    background-image: none;
+    box-shadow: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (max-width: 1023px) and (prefers-reduced-motion: reduce) {
+  .liquid-glass-header[data-transparent="true"] {
+    transition: none;
+  }
+}
+
 .liquid-glass-control {
   border: 1px solid rgba(255, 255, 255, 0.9);
   background-image:
@@ -582,8 +615,7 @@
 .liquid-glass-nav-accent {
   position: relative;
   z-index: 1;
-  /* Keep the centre button a rounded square even though the container radius is larger. */
-  border-radius: min(calc(var(--nav-radius-top, 1.25rem) - var(--nav-pad, 0.375rem)), 0.9rem);
+  border-radius: calc(var(--nav-radius-top, 1.25rem) - var(--nav-pad, 0.375rem));
   border: 1px solid rgba(255, 255, 255, 0.4);
   color: #ffffff;
   background-image:

@@ -100,7 +100,7 @@ export default function BottomNav({
           aria-label={isGuest || authPending ? 'Masuk untuk top up' : 'Top up saldo'}
           title={isGuest || authPending ? 'Masuk untuk top up' : 'Top up saldo'}
           onClick={isGuest || authPending ? onOpenAuth : onOpenDeposit}
-          className={cn(itemClass, 'liquid-glass-nav-accent mx-auto h-11 w-11 justify-center sm:h-12 sm:w-12')}
+          className={cn(itemClass, 'liquid-glass-nav-accent h-full w-full justify-center')}
         >
           <Plus className="h-[19px] w-[19px]" aria-hidden="true" />
           <span className="text-[9px] font-semibold leading-none sm:text-[10px]">
