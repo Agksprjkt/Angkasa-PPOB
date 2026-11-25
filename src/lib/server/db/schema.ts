@@ -22,6 +22,8 @@ export const {
   featuredProducts,
   flashSaleOffers,
   flashSaleReservations,
+  vouchers,
+  voucherRedemptions,
   productProviderSettings,
   invoices,
   transactions,

@@ -141,6 +141,20 @@
       "when": 1795534570029,
       "tag": "0019_steady_blizzard",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1795605907512,
+      "tag": "0020_kind_logan",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1795610347613,
+      "tag": "0021_clever_shiva",
+      "breakpoints": true
     }
   ]
 }

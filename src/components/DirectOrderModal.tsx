@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Dialog } from '@base-ui/react/dialog';
-import { ArrowRight, CheckCircle2, CreditCard, UserRound, Wallet, X } from 'lucide-react';
+import { ArrowRight, CheckCircle2, CreditCard, Tag, UserRound, Wallet, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { TransactionPinPad, PIN_LENGTH } from '@/components/TransactionPinPad';
 import { usePPOB } from '@/context/PPOBContext';
 import type { Product } from '@/types/ppob';
 import { validateOrderDestination } from '@/lib/order-input-validation';
+import { vendorLabelOf } from '@/lib/vendor-registry';
+import { voucherErrorMessage, type VoucherErrorCode } from '@/lib/voucher-core';
 
 interface StoredOrderAccess {
   id: string;
@@ -40,6 +42,13 @@ function requestError(code?: string) {
     INVALID_PLN_METER_NUMBER: 'Nomor meter PLN harus terdiri dari 9–16 digit.',
     INSUFFICIENT_BALANCE: 'Saldo akun tidak mencukupi.',
     INVALID_TRANSACTION_PIN: 'PIN transaksi salah atau belum lengkap.',
+    VOUCHER_NOT_FOUND: 'Kode voucher tidak ditemukan.',
+    VOUCHER_INACTIVE: 'Kode voucher sedang tidak aktif.',
+    VOUCHER_NOT_STARTED: 'Kode voucher belum berlaku.',
+    VOUCHER_EXPIRED: 'Kode voucher sudah kedaluwarsa.',
+    VOUCHER_QUOTA_EXHAUSTED: 'Kuota kode voucher sudah habis.',
+    VOUCHER_MIN_ORDER_NOT_MET: 'Total transaksi belum memenuhi syarat kode voucher.',
+    VOUCHER_USER_LIMIT_REACHED: 'Kamu sudah memakai kode ini sampai batasnya.',
     TRANSACTION_PIN_NOT_SET: 'Atur PIN transaksi 6 digit terlebih dahulu.',
     TRANSACTION_PIN_LOCKED: 'Terlalu banyak percobaan PIN. Coba lagi dalam 15 menit.',
     TRANSACTION_PIN_STATUS_UNAVAILABLE: 'Status PIN transaksi gagal dimuat.',
@@ -81,6 +90,14 @@ export default function DirectOrderModal({
   const [pinConfigured, setPinConfigured] = useState<boolean | null>(null);
   const [pinStatusUnavailable, setPinStatusUnavailable] = useState(false);
   const [isCancelConfirmOpen, setIsCancelConfirmOpen] = useState(false);
+  const [voucherInput, setVoucherInput] = useState('');
+  const [appliedVoucher, setAppliedVoucher] = useState<{
+    code: string;
+    discountAmount: number;
+    finalPrice: number;
+  } | null>(null);
+  const [voucherError, setVoucherError] = useState('');
+  const [isApplyingVoucher, setIsApplyingVoucher] = useState(false);
   const idempotencyKey = useRef<string | null>(null);
 
   // Persist the key so a refresh mid-checkout cannot create a duplicate order.
@@ -106,7 +123,9 @@ export default function DirectOrderModal({
   const displayedPrice = role === 'agent'
     ? product?.sellPriceAgent ?? product?.sellPriceUser ?? 0
     : product?.sellPriceUser ?? 0;
-  const canPayWithBalance = Boolean(currentUser) && balance >= displayedPrice;
+  // The voucher prices the order; everything the buyer sees and pays uses it.
+  const payablePrice = appliedVoucher ? appliedVoucher.finalPrice : displayedPrice;
+  const canPayWithBalance = Boolean(currentUser) && balance >= payablePrice;
   const requiresTransactionPin =
     currentUser?.role === 'user' || currentUser?.role === 'agent';
   const isPinStatusLoading =
@@ -148,6 +167,9 @@ export default function DirectOrderModal({
       setPinConfigured(null);
       setPinStatusUnavailable(false);
       setIsCancelConfirmOpen(false);
+      setVoucherInput('');
+      setAppliedVoucher(null);
+      setVoucherError('');
       idempotencyKey.current = null;
     }
     onOpenChange(nextOpen);
@@ -255,6 +277,7 @@ export default function DirectOrderModal({
         customerName,
         serverZoneId,
         requiresTransactionPin ? pinToUse : undefined,
+        appliedVoucher?.code,
       );
       router.push(`/invoice/${encodeURIComponent(result.transaction.id)}`);
       setPinPadOpen(false);
@@ -337,6 +360,7 @@ export default function DirectOrderModal({
           destination,
           customerName,
           serverZoneId,
+          ...(appliedVoucher ? { voucherCode: appliedVoucher.code } : {}),
           ...(currentUser
             ? {}
             : {
@@ -391,6 +415,51 @@ export default function DirectOrderModal({
 
   if (!product) return null;
 
+  const applyVoucher = async () => {
+    const code = voucherInput.trim();
+    if (!code || isApplyingVoucher) return;
+    setIsApplyingVoucher(true);
+    setVoucherError('');
+    try {
+      const response = await fetch('/api/vouchers/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, productId: product.id, basePrice: displayedPrice }),
+      });
+      const result = await response.json() as {
+        code?: string;
+        discountAmount?: number;
+        finalPrice?: number;
+        error?: string;
+      };
+      if (!response.ok || typeof result.discountAmount !== 'number' ||
+        typeof result.finalPrice !== 'number' || typeof result.code !== 'string') {
+        setAppliedVoucher(null);
+        setVoucherError(
+          voucherErrorMessage((result.error ?? 'VOUCHER_NOT_FOUND') as VoucherErrorCode),
+        );
+        return;
+      }
+      setAppliedVoucher({
+        code: result.code,
+        discountAmount: result.discountAmount,
+        finalPrice: result.finalPrice,
+      });
+      setVoucherInput(result.code);
+    } catch {
+      setAppliedVoucher(null);
+      setVoucherError('Kode voucher gagal diperiksa. Coba lagi.');
+    } finally {
+      setIsApplyingVoucher(false);
+    }
+  };
+
+  const removeVoucher = () => {
+    setAppliedVoucher(null);
+    setVoucherInput('');
+    setVoucherError('');
+  };
+
   return (
     <>
       <Dialog.Root open={open} onOpenChange={setDrawerOpen}>
@@ -432,6 +501,12 @@ export default function DirectOrderModal({
                   <dd className="text-right font-semibold text-slate-900">{product.name}</dd>
                 </div>
                 <div className="flex justify-between gap-4">
+                  <dt className="text-slate-500">Sumber</dt>
+                  <dd className="text-right font-semibold text-slate-900">
+                    {vendorLabelOf(product)}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-4">
                   <dt className="text-slate-500">Tujuan</dt>
                   <dd className="max-w-[65%] break-all text-right font-mono text-slate-900">
                     {fullDestination || 'Belum diisi'}
@@ -446,7 +521,7 @@ export default function DirectOrderModal({
                 <div className="flex justify-between gap-4 border-t border-slate-200 pt-3">
                   <dt className="font-semibold text-slate-700">Total bayar</dt>
                   <dd className="text-base font-bold text-sky-700">
-                    Rp {displayedPrice.toLocaleString('id-ID')}
+                    Rp {payablePrice.toLocaleString('id-ID')}
                   </dd>
                 </div>
               </dl>
@@ -588,6 +663,65 @@ export default function DirectOrderModal({
                 {statusError}
               </p>
             )}
+
+            <section className="space-y-2.5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <h3 className="flex items-center gap-2 text-sm font-bold text-slate-900">
+                <Tag className="h-4 w-4 text-sky-600" />
+                Kode promo
+              </h3>
+              {appliedVoucher ? (
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-bold text-emerald-800">
+                      {appliedVoucher.code}
+                    </p>
+                    <p className="text-xs text-emerald-700">
+                      Hemat Rp {appliedVoucher.discountAmount.toLocaleString('id-ID')}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={removeVoucher}
+                    className="shrink-0 rounded-lg px-2 py-1 text-xs font-semibold text-emerald-800 underline hover:text-emerald-950"
+                  >
+                    Hapus
+                  </button>
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={voucherInput}
+                    onChange={(event) => {
+                      setVoucherInput(event.target.value.toUpperCase());
+                      setVoucherError('');
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        void applyVoucher();
+                      }
+                    }}
+                    maxLength={32}
+                    placeholder="Contoh: HEMAT5"
+                    aria-label="Kode promo"
+                    className="h-11 min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-3 text-sm uppercase outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-11 shrink-0"
+                    disabled={!voucherInput.trim() || isApplyingVoucher}
+                    onClick={() => void applyVoucher()}
+                  >
+                    {isApplyingVoucher ? 'Memeriksa…' : 'Terapkan'}
+                  </Button>
+                </div>
+              )}
+              {voucherError && (
+                <p role="alert" className="text-xs text-rose-700">{voucherError}</p>
+              )}
+            </section>
           </div>
 
           <footer className="flex gap-3 border-t border-slate-200 bg-white px-5 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-7">
@@ -616,7 +750,7 @@ export default function DirectOrderModal({
                     requiresTransactionPin &&
                     pinConfigured === false
                   ? 'Atur PIN di Pengaturan'
-                  : `Bayar Rp ${displayedPrice.toLocaleString('id-ID')}`}
+                  : `Bayar Rp ${payablePrice.toLocaleString('id-ID')}`}
               {!isProcessing && <ArrowRight className="ml-1.5 h-4 w-4" />}
             </Button>
           </footer>
@@ -657,7 +791,7 @@ export default function DirectOrderModal({
       {pinPadOpen && (
         <TransactionPinPad
           productName={product.name}
-          amount={displayedPrice}
+          amount={payablePrice}
           digits={transactionPin}
           isProcessing={isProcessing}
           error={pinError}

@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { ImagePlus, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { ImagePlus, Pencil, Plus, RefreshCw, Trash2, Upload } from 'lucide-react';
 import type { PromotionalBanner } from '@/types/ppob';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -63,7 +63,10 @@ function isPromotionalBanner(value: unknown): value is PromotionalBanner {
 function getErrorMessage(error: unknown) {
   const message = error instanceof Error ? error.message : '';
   if (message === 'INVALID_PROMOTION') {
-    return 'Periksa judul, tautan, urutan, dan waktu promosi.';
+    return 'Periksa tautan, urutan, dan waktu promosi. Banner harus punya judul atau gambar.';
+  }
+  if (message === 'INVALID_PROMOTION_UPDATE') {
+    return 'Perubahan ditolak. Banner harus tetap punya judul atau gambar.';
   }
   if (message === 'PROMOTION_NOT_FOUND') {
     return 'Banner promosi sudah tidak tersedia. Muat ulang daftar.';
@@ -98,6 +101,8 @@ export default function PromotionManagementPanel() {
   const [loadError, setLoadError] = useState('');
   const [actionError, setActionError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadBanners = useCallback(async () => {
     setIsLoading(true);
@@ -154,6 +159,55 @@ export default function PromotionManagementPanel() {
     setIsFormOpen(true);
   };
 
+  const handleImageSelected = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    // Let the same file be chosen again after a failed upload.
+    event.target.value = '';
+    if (!file) return;
+    if (file.size > 5_000_000) {
+      setActionError('Gambar terlalu besar. Maksimal 5 MB.');
+      return;
+    }
+
+    setIsUploadingImage(true);
+    setActionError('');
+    try {
+      const body = new FormData();
+      body.append('file', file);
+      const response = await fetch('/api/admin/promotions/assets', { method: 'POST', body });
+      const result = await response.json() as { imageUrl?: string; error?: string };
+      if (!response.ok || typeof result.imageUrl !== 'string') {
+        throw new Error(result.error ?? 'Gambar banner gagal diunggah.');
+      }
+      const previous = form.imageUrl;
+      setForm((current) => ({ ...current, imageUrl: result.imageUrl as string }));
+      // Drop the replaced file so storage does not fill up with orphans.
+      if (previous.startsWith('/api/promotion-assets/')) {
+        void fetch(`/api/admin/promotions/assets?url=${encodeURIComponent(previous)}`, {
+          method: 'DELETE',
+        }).catch(() => undefined);
+      }
+    } catch (error) {
+      console.error('[ADMIN_BANNER_IMAGE_UPLOAD_FAILED]', error);
+      setActionError(error instanceof Error ? error.message : 'Gambar banner gagal diunggah.');
+    } finally {
+      setIsUploadingImage(false);
+    }
+  };
+
+  const removeFormImage = async () => {
+    const current = form.imageUrl;
+    setForm((state) => ({ ...state, imageUrl: '' }));
+    if (!current.startsWith('/api/promotion-assets/')) return;
+    try {
+      await fetch(`/api/admin/promotions/assets?url=${encodeURIComponent(current)}`, {
+        method: 'DELETE',
+      });
+    } catch (error) {
+      console.error('[ADMIN_BANNER_IMAGE_DELETE_FAILED]', error);
+    }
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setActionError('');
@@ -161,6 +215,11 @@ export default function PromotionManagementPanel() {
     const sortOrder = Number(form.sortOrder);
     if (!Number.isSafeInteger(sortOrder) || sortOrder < 0) {
       setActionError('Urutan harus berupa bilangan bulat nol atau lebih.');
+      return;
+    }
+    // The API accepts an empty title only when there is an image to show.
+    if (!form.title.trim() && !form.imageUrl.trim()) {
+      setActionError('Isi judul atau unggah gambar banner terlebih dahulu.');
       return;
     }
 
@@ -261,6 +320,46 @@ export default function PromotionManagementPanel() {
     }
   };
 
+  const deleteBannerImage = async (banner: PromotionalBanner) => {
+    // A banner with no image and no title has nothing to show, and the API
+    // rejects that state. Explain it instead of firing a request that fails.
+    if (!banner.title.trim()) {
+      setActionError(
+        'Banner ini hanya berisi gambar. Isi judul dulu lewat Edit, baru gambar bisa dihapus.',
+      );
+      setSuccessMessage('');
+      return;
+    }
+    if (!window.confirm('Hapus gambar banner ini?')) return;
+    setBusyId(banner.id);
+    setActionError('');
+    setSuccessMessage('');
+    try {
+      const response = await fetch('/api/admin/promotions', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: banner.id, updates: { imageUrl: '' } }),
+      });
+      const result = await response.json() as { banner?: unknown; error?: string };
+      if (!response.ok || !isPromotionalBanner(result.banner)) {
+        throw new Error(result.error ?? 'Gambar banner tidak dapat dihapus.');
+      }
+      const updated = result.banner;
+      setBanners((current) => sortBanners(
+        current.map((item) => item.id === banner.id ? updated : item),
+      ));
+      await fetch(`/api/admin/promotions/assets?url=${encodeURIComponent(banner.imageUrl)}`, {
+        method: 'DELETE',
+      }).catch(() => undefined);
+      setSuccessMessage('Gambar banner dihapus.');
+    } catch (error) {
+      console.error('[ADMIN_BANNER_IMAGE_REMOVE_FAILED]', error);
+      setActionError(getErrorMessage(error));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   return (
     <div className="space-y-5">
       <Card>
@@ -311,27 +410,27 @@ export default function PromotionManagementPanel() {
             <form onSubmit={(event) => void handleSubmit(event)} className="space-y-4">
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
-                  <Label htmlFor="promotion-title">Judul</Label>
+                  <Label htmlFor="promotion-title">Judul (opsional)</Label>
                   <Input
                     id="promotion-title"
                     value={form.title}
                     maxLength={120}
-                    required
+                    placeholder="Kosongkan bila banner hanya gambar"
                     onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))}
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="promotion-button">Teks tombol</Label>
+                  <Label htmlFor="promotion-button">Teks tombol (opsional)</Label>
                   <Input
                     id="promotion-button"
                     value={form.buttonLabel}
                     maxLength={40}
-                    required
+                    placeholder="Kosongkan bila tidak perlu"
                     onChange={(event) => setForm((current) => ({ ...current, buttonLabel: event.target.value }))}
                   />
                 </div>
                 <div className="space-y-2 md:col-span-2">
-                  <Label htmlFor="promotion-description">Deskripsi</Label>
+                  <Label htmlFor="promotion-description">Deskripsi (opsional)</Label>
                   <textarea
                     id="promotion-description"
                     value={form.description}
@@ -342,21 +441,78 @@ export default function PromotionManagementPanel() {
                   />
                 </div>
                 <div className="space-y-2 md:col-span-2">
-                  <Label htmlFor="promotion-image">URL gambar (opsional)</Label>
+                  <Label>Gambar banner</Label>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+                    <div className="relative flex h-32 w-full max-w-xs items-center justify-center overflow-hidden rounded-lg border border-dashed border-slate-300 bg-slate-50">
+                      {form.imageUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={form.imageUrl}
+                          alt="Pratinjau banner"
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <span className="px-3 text-center text-xs text-slate-500">
+                          Belum ada gambar
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        className="sr-only"
+                        onChange={(event) => void handleImageSelected(event)}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={isUploadingImage}
+                        onClick={() => fileInputRef.current?.click()}
+                      >
+                        <Upload className="mr-2 h-4 w-4" />
+                        {isUploadingImage
+                          ? 'Mengunggah...'
+                          : form.imageUrl ? 'Ganti gambar' : 'Unggah gambar'}
+                      </Button>
+                      {form.imageUrl && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled={isUploadingImage}
+                          onClick={() => void removeFormImage()}
+                          className="text-rose-700 hover:bg-rose-50 hover:text-rose-800"
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Hapus gambar
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    PNG, JPG, atau WebP, maksimal 5 MB. Disarankan lanskap 16:7.
+                  </p>
+                </div>
+                <div className="space-y-2 md:col-span-2">
+                  <Label htmlFor="promotion-image">Atau tempel URL gambar</Label>
                   <Input
                     id="promotion-image"
                     value={form.imageUrl}
-                    placeholder="https://... atau /uploads/..."
-                    onChange={(event) => setForm((current) => ({ ...current, imageUrl: event.target.value }))}
+                    placeholder="https://... atau /api/promotion-assets/..."
+                    onChange={(event) => setForm((current) => ({
+                      ...current,
+                      imageUrl: event.target.value,
+                    }))}
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="promotion-target">Path atau anchor tujuan</Label>
+                  <Label htmlFor="promotion-target">Path, anchor, atau URL tujuan</Label>
                   <Input
                     id="promotion-target"
                     value={form.targetPath}
                     required
-                    placeholder="/checkout/game/FREE%20FIRE"
+                    placeholder="/checkout/game/FREE%20FIRE atau https://..."
                     onChange={(event) => setForm((current) => ({ ...current, targetPath: event.target.value }))}
                   />
                 </div>
@@ -447,7 +603,9 @@ export default function PromotionManagementPanel() {
               <CardHeader className="flex-1">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <CardTitle className="line-clamp-2 text-base">{banner.title}</CardTitle>
+                    <CardTitle className="line-clamp-2 text-base">
+                      {banner.title || 'Banner tanpa judul'}
+                    </CardTitle>
                     <CardDescription className="mt-1 line-clamp-2">{banner.description || 'Tanpa deskripsi'}</CardDescription>
                   </div>
                   <Badge variant={banner.enabled ? 'blue' : 'outline'}>
@@ -484,6 +642,19 @@ export default function PromotionManagementPanel() {
                   >
                     {banner.enabled ? 'Nonaktifkan' : 'Aktifkan'}
                   </Button>
+                  {banner.imageUrl.startsWith('/api/promotion-assets/') && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={busyId === banner.id}
+                      onClick={() => void deleteBannerImage(banner)}
+                      className="text-rose-700 hover:bg-rose-50 hover:text-rose-800"
+                    >
+                      <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                      Hapus gambar
+                    </Button>
+                  )}
                   <Button
                     type="button"
                     size="sm"

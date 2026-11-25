@@ -51,6 +51,10 @@ function presentInvoice(invoice: typeof invoices.$inferSelect) {
       : invoice.destination,
     totalPay: invoice.totalPay,
     payableAmount: invoice.payableAmount ?? invoice.totalPay,
+    // The buyer sees a reduced total, so the voucher and its amount must be
+    // visible too; otherwise the invoice looks wrong.
+    voucherCode: invoice.voucherCode,
+    discountAmount: invoice.discountAmount,
     paymentStatus: invoice.paymentStatus,
     transactionStatus: invoice.transactionStatus,
     qrString: invoice.qrString,

@@ -1,7 +1,7 @@
 import 'server-only';
 
 import { randomUUID } from 'node:crypto';
-import { sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { calculateDigiflazzSellPrices } from '@/lib/digiflazz-product-pricing';
 import {
   getNextDigiflazzProductSyncAt,
@@ -176,7 +176,7 @@ export async function syncDigiflazzProducts(): Promise<DigiflazzAutoSyncResult> 
         .insert(productTable)
         .values(batch)
         .onConflictDoUpdate({
-          target: productTable.vendorCode,
+          target: [productTable.vendor, productTable.vendorCode],
           set: {
             name: sql`excluded."name"`,
             category: sql`excluded."category"`,
@@ -188,6 +188,12 @@ export async function syncDigiflazzProducts(): Promise<DigiflazzAutoSyncResult> 
             status: sql`excluded."status"`,
             updatedAt: sql`excluded."updatedAt"`,
           },
+          // The vendor is part of the key now, so this cannot collide with a
+          // TokoVoucher product that happens to share the same code.
+          setWhere: and(
+            eq(productTable.vendor, 'Digiflazz'),
+            eq(productTable.vendorCode, sql`excluded."vendorCode"`),
+          ),
         });
     }
   });

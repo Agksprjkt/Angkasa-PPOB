@@ -106,6 +106,10 @@ export default function PromotionSlider() {
       });
       return;
     }
+    if (/^https?:\/\//i.test(activeSlide.targetPath)) {
+      window.open(activeSlide.targetPath, '_blank', 'noopener,noreferrer');
+      return;
+    }
     router.push(activeSlide.targetPath);
   };
 
@@ -181,15 +185,17 @@ export default function PromotionSlider() {
           <button
             type="button"
             onClick={openSlideTarget}
-            aria-label={`${activeSlide.title} — buka`}
+            aria-label={activeSlide.title ? `${activeSlide.title} — buka` : 'Buka promosi'}
             className="group absolute inset-0 z-10 flex flex-col justify-end p-5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white sm:p-8 lg:justify-center lg:px-12"
           >
             <div className="max-w-2xl" aria-live="polite">
-              <h2 className={`line-clamp-2 max-w-xl text-2xl font-bold leading-tight tracking-tight sm:text-3xl lg:text-4xl ${
-                hasImage ? 'text-white' : 'text-slate-900'
-              }`}>
-                {activeSlide.title}
-              </h2>
+              {activeSlide.title && (
+                <h2 className={`line-clamp-2 max-w-xl text-2xl font-bold leading-tight tracking-tight sm:text-3xl lg:text-4xl ${
+                  hasImage ? 'text-white' : 'text-slate-900'
+                }`}>
+                  {activeSlide.title}
+                </h2>
+              )}
               {activeSlide.description && (
                 <p className={`mt-2 line-clamp-2 max-w-lg text-sm leading-relaxed ${
                   hasImage ? 'text-slate-200' : 'text-slate-600'
@@ -197,12 +203,14 @@ export default function PromotionSlider() {
                   {activeSlide.description}
                 </p>
               )}
-              <span className={`mt-3 inline-flex items-center gap-1 text-xs font-semibold transition group-hover:gap-2 ${
-                hasImage ? 'text-white' : 'text-blue-700'
-              }`}>
-                Lihat promo
-                <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
-              </span>
+              {activeSlide.buttonLabel && (
+                <span className={`mt-3 inline-flex items-center gap-1 text-xs font-semibold transition group-hover:gap-2 ${
+                  hasImage ? 'text-white' : 'text-blue-700'
+                }`}>
+                  {activeSlide.buttonLabel}
+                  <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
+                </span>
+              )}
             </div>
           </button>
 

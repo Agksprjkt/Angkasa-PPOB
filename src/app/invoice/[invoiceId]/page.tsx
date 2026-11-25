@@ -24,6 +24,8 @@ interface OrderInvoice {
   destination: string;
   totalPay: number;
   payableAmount: number;
+  voucherCode: string | null;
+  discountAmount: number;
   paymentStatus: 'unpaid' | 'paid' | 'expired' | 'review';
   transactionStatus: 'pending' | 'processing' | 'success' | 'failed';
   qrString: string | null;
@@ -312,8 +314,14 @@ export default function OrderInvoicePage() {
     rows.push(
       { label: 'Produk', value: invoice?.productName ?? transaction?.productName ?? '-' },
       { label: 'Tujuan', value: invoice?.destination ?? transaction?.destination ?? '-', mono: true },
-      { label: 'Total', value: formatCurrency(total) },
     );
+    if (invoice?.voucherCode && invoice.discountAmount > 0) {
+      rows.push({
+        label: `Diskon ${invoice.voucherCode}`,
+        value: `- ${formatCurrency(invoice.discountAmount)}`,
+      });
+    }
+    rows.push({ label: 'Total', value: formatCurrency(total) });
     if (transaction?.sn?.trim()) {
       rows.push({ label: 'SN/Token', value: transaction.sn.trim(), mono: true });
     }

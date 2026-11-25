@@ -23,6 +23,7 @@ import SystemSettingsPanel from '@/components/SystemSettingsPanel';
 import StoreLogo from '@/components/StoreLogo';
 import AdminTransactionsPanel from '@/components/AdminTransactionsPanel';
 import PromotionManagementPanel from '@/components/PromotionManagementPanel';
+import VoucherManagementPanel from '@/components/VoucherManagementPanel';
 import FlashSalePanel from '@/components/FlashSalePanel';
 import FeaturedProductsPanel from '@/components/FeaturedProductsPanel';
 import LegalDocumentsPanel from '@/components/LegalDocumentsPanel';
@@ -64,6 +65,7 @@ import {
   RefreshCw,
   MessageCircle,
   Megaphone,
+  Ticket,
   Zap,
   FileText,
   Trash2,
@@ -274,7 +276,7 @@ export default function AdminPanel() {
     | 'flash-sales'
   >('metrics');
   const [productView, setProductView] = useState<ProductAdminView>('all');
-  const [promotionView, setPromotionView] = useState<'banners' | 'flash-sales' | 'featured'>('banners');
+  const [promotionView, setPromotionView] = useState<'banners' | 'flash-sales' | 'featured' | 'vouchers'>('banners');
   const [isPromotionMenuOpen, setIsPromotionMenuOpen] = useState(false);
   const [settingsView, setSettingsView] = useState<'profile' | 'seo' | 'payments' | 'legal'>('profile');
   const [isProductMenuOpen, setIsProductMenuOpen] = useState(false);
@@ -679,6 +681,7 @@ export default function AdminPanel() {
     banners: 'Banner Promosi',
     'flash-sales': 'Flash Sale',
     featured: 'Produk Unggulan',
+    vouchers: 'Kode Voucher',
   } as const;
   const activeSectionLabel =
     activeAdminTab === 'products'
@@ -908,6 +911,7 @@ export default function AdminPanel() {
                   { id: 'banners', label: 'Banner', icon: Megaphone },
                   { id: 'flash-sales', label: 'Flash Sale', icon: Zap },
                   { id: 'featured', label: 'Produk Unggulan', icon: Flame },
+                  { id: 'vouchers', label: 'Voucher', icon: Ticket },
                 ] as const).map((item) => (
                   <SidebarNavButton
                     key={item.id}
@@ -1911,6 +1915,8 @@ export default function AdminPanel() {
           <FlashSalePanel />
         ) : promotionView === 'featured' ? (
           <FeaturedProductsPanel />
+        ) : promotionView === 'vouchers' ? (
+          <VoucherManagementPanel />
         ) : (
           <PromotionManagementPanel />
         )

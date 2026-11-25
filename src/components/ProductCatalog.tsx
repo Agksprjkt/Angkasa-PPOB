@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { usePPOB } from '@/context/PPOBContext';
 import { CatalogProduct, Product, ProductCategory } from '@/types/ppob';
+import { vendorLabelOf } from '@/lib/vendor-registry';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -1056,6 +1057,11 @@ export default function ProductCatalog({
                       )}
                       <span className="font-sans text-sm font-bold text-slate-900 sm:text-base">
                         Rp {activePrice.toLocaleString('id-ID')}
+                      </span>
+                      {/* Two vendors can sell the same nominal, so the source is
+                          shown on the card to tell them apart. */}
+                      <span className="ml-auto inline-flex shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-slate-500">
+                        {vendorLabelOf(product)}
                       </span>
                     </div>
                   </button>

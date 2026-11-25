@@ -72,6 +72,13 @@ export async function POST(request: NextRequest) {
   if ('transactionPin' in payload && typeof payload.transactionPin !== 'string') {
     return NextResponse.json({ error: 'INVALID_TRANSACTION_PIN' }, { status: 400 });
   }
+  if ('voucherCode' in payload && typeof payload.voucherCode !== 'string') {
+    return NextResponse.json({ error: 'INVALID_VOUCHER' }, { status: 400 });
+  }
+  const voucherCode =
+    typeof payload.voucherCode === 'string' && payload.voucherCode.trim()
+      ? payload.voucherCode.trim().slice(0, 32)
+      : undefined;
   const transactionPin =
     typeof payload.transactionPin === 'string' ? payload.transactionPin : undefined;
 
@@ -107,6 +114,7 @@ export async function POST(request: NextRequest) {
     flashSaleOfferId,
     flashSalePriceExpected:
       typeof flashSalePriceExpected === 'number' ? flashSalePriceExpected : undefined,
+    voucherCode,
     user: {
       id: session.user.id,
       phoneNumber: session.user.phoneNumber,

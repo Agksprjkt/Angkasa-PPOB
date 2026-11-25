@@ -88,6 +88,7 @@ interface PPOBContextType {
     customerName?: string,
     serverZoneId?: string,
     transactionPin?: string,
+    voucherCode?: string,
   ) => Promise<{ success: boolean; transaction: Transaction; error?: string }>;
 
   // Deposits
@@ -562,12 +563,15 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
     customerName?: string,
     serverZoneId?: string,
     transactionPin?: string,
+    voucherCode?: string,
   ): Promise<{ success: boolean; transaction: Transaction; error?: string }> => {
     if (!currentUser) {
       throw new Error('Silakan login untuk membayar menggunakan saldo deposit.');
     }
 
-    const requestKey = `${currentUser.id}:${productId}:${destination}:${serverZoneId ?? ''}`;
+    // A voucher changes the payable amount, so it must be part of the key: reusing
+    // the key of an unvouchered attempt would replay the old order.
+    const requestKey = `${currentUser.id}:${productId}:${destination}:${serverZoneId ?? ''}:${voucherCode ?? ''}`;
     let idempotencyKey = purchaseKeys.current.get(requestKey);
     if (!idempotencyKey) {
       idempotencyKey = crypto.randomUUID();
@@ -587,6 +591,7 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
         serverZoneId,
         transactionPin,
         paymentMethod: 'balance',
+        ...(voucherCode ? { voucherCode } : {}),
       }),
     });
 

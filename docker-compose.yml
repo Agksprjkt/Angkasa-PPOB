@@ -87,6 +87,7 @@ services:
     environment:
       PAYMENT_RECONCILER_URL: http://app:3000/api/internal/reconcile-payments
       DIGIFLAZZ_SYNC_URL: http://app:3000/api/internal/digiflazz-product-sync
+      TOKOVOUCHER_SYNC_URL: http://app:3000/api/internal/tokovoucher-product-sync
     working_dir: /app
     command: ["node", "scripts/payment-reconciler.mjs"]
     networks:

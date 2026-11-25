@@ -2,6 +2,8 @@ const endpoint = process.env.PAYMENT_RECONCILER_URL
   ?? 'http://app:3000/api/internal/reconcile-payments';
 const productSyncEndpoint = process.env.DIGIFLAZZ_SYNC_URL
   ?? 'http://app:3000/api/internal/digiflazz-product-sync';
+const tokoVoucherSyncEndpoint = process.env.TOKOVOUCHER_SYNC_URL
+  ?? 'http://app:3000/api/internal/tokovoucher-product-sync';
 const secret = process.env.PAYMENT_RECONCILER_SECRET;
 const intervalMs = 60_000;
 
@@ -14,6 +16,7 @@ while (true) {
   for (const [label, url] of [
     ['Payment reconciliation', endpoint],
     ['Digiflazz product sync check', productSyncEndpoint],
+    ['TokoVoucher product sync check', tokoVoucherSyncEndpoint],
   ]) {
     try {
       const response = await fetch(url, {

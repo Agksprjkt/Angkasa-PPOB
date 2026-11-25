@@ -32,6 +32,22 @@ const settingNames = [
   'qrislyMode',
   'qrislyEnabled',
   'activePaymentGateway',
+  'tokovoucherMemberCode',
+  'tokovoucherSecret',
+  'tokovoucherDefaultSignature',
+  'tokovoucherMode',
+  'tokovoucherEnableRealTransactions',
+  'tokovoucherAutoSyncEnabled',
+  'tokovoucherAutoSyncIntervalDays',
+  'tokovoucherAutoSyncNextRunAt',
+  'tokovoucherAutoSyncLastRunAt',
+  'tokovoucherAutoSyncLastStatus',
+  'tokovoucherAutoSyncLastError',
+  'tokovoucherAutoSyncLastResult',
+  'digiflazzEnabled',
+  'digiflazzWebhookSecret',
+  'tokovoucherEnabled',
+  'tokovoucherWebhookSecret',
 ] as const;
 
 export type IntegrationSettingName = (typeof settingNames)[number];
@@ -70,6 +86,22 @@ export const integrationSettingEnvironmentNames: Record<
   qrislyMode: 'QRISLY_MODE',
   qrislyEnabled: 'QRISLY_ENABLED',
   activePaymentGateway: 'ACTIVE_PAYMENT_GATEWAY',
+  tokovoucherMemberCode: 'TOKOVOUCHER_MEMBER_CODE',
+  tokovoucherSecret: 'TOKOVOUCHER_SECRET',
+  tokovoucherDefaultSignature: 'TOKOVOUCHER_DEFAULT_SIGNATURE',
+  tokovoucherMode: 'TOKOVOUCHER_MODE',
+  tokovoucherEnableRealTransactions: 'TOKOVOUCHER_ENABLE_REAL_TRANSACTIONS',
+  tokovoucherAutoSyncEnabled: 'TOKOVOUCHER_AUTO_SYNC_ENABLED',
+  tokovoucherAutoSyncIntervalDays: 'TOKOVOUCHER_AUTO_SYNC_INTERVAL_DAYS',
+  tokovoucherAutoSyncNextRunAt: null,
+  tokovoucherAutoSyncLastRunAt: null,
+  tokovoucherAutoSyncLastStatus: null,
+  tokovoucherAutoSyncLastError: null,
+  tokovoucherAutoSyncLastResult: null,
+  digiflazzEnabled: 'DIGIFLAZZ_ENABLED',
+  digiflazzWebhookSecret: 'DIGIFLAZZ_WEBHOOK_SECRET',
+  tokovoucherEnabled: 'TOKOVOUCHER_ENABLED',
+  tokovoucherWebhookSecret: 'TOKOVOUCHER_WEBHOOK_SECRET',
 };
 
 export function isIntegrationSettingName(
@@ -152,6 +184,13 @@ export const internalIntegrationSettingNames = [
   'digiflazzAutoSyncLastStatus',
   'digiflazzAutoSyncLastError',
   'digiflazzAutoSyncLastResult',
+  'tokovoucherAutoSyncEnabled',
+  'tokovoucherAutoSyncIntervalDays',
+  'tokovoucherAutoSyncNextRunAt',
+  'tokovoucherAutoSyncLastRunAt',
+  'tokovoucherAutoSyncLastStatus',
+  'tokovoucherAutoSyncLastError',
+  'tokovoucherAutoSyncLastResult',
 ] as const satisfies readonly IntegrationSettingName[];
 
 export function isInternalIntegrationSetting(
@@ -263,6 +302,126 @@ export async function getDigiflazzConfig() {
     apiKey: values.digiflazzApiKey,
     mode: values.digiflazzMode ?? 'sandbox',
     enableRealTransactions: values.enableRealTransactions === 'true',
+  };
+}
+
+export async function getTokoVoucherConfig() {
+  const { values, sources } = await getIntegrationConfig();
+  return {
+    memberCode: values.tokovoucherMemberCode ?? '',
+    secret: values.tokovoucherSecret ?? '',
+    defaultSignature: values.tokovoucherDefaultSignature ?? '',
+    mode: values.tokovoucherMode === 'production' ? 'production' as const : 'sandbox' as const,
+    // A separate switch from Digiflazz so enabling one provider never silently
+    // starts charging real money on the other.
+    enableRealTransactions: values.tokovoucherEnableRealTransactions === 'true',
+    sources,
+  };
+}
+
+// Auto-sync is off unless an admin turns it on: a new vendor must never start
+// writing products into the catalogue on its own.
+export async function getTokoVoucherAutoSyncConfig() {
+  const { values, sources } = await getIntegrationConfig();
+  const intervalValue = Number(values.tokovoucherAutoSyncIntervalDays);
+  const intervalDays = (values.tokovoucherAutoSyncIntervalDays
+    ? intervalValue
+    : 7) as DigiflazzAutoSyncInterval;
+  if (
+    !digiflazzAutoSyncIntervals.includes(
+      intervalDays as DigiflazzAutoSyncInterval,
+    )
+  ) {
+    throw new Error('INVALID_TOKOVOUCHER_AUTO_SYNC_INTERVAL');
+  }
+  let lastResult: DigiflazzAutoSyncResult | null = null;
+  if (values.tokovoucherAutoSyncLastResult) {
+    try {
+      const parsed: unknown = JSON.parse(values.tokovoucherAutoSyncLastResult);
+      if (
+        typeof parsed === 'object' &&
+        parsed !== null &&
+        ['total', 'synced', 'created', 'updated', 'skipped'].every(
+          (key) =>
+            Number.isSafeInteger((parsed as Record<string, unknown>)[key]) &&
+            Number((parsed as Record<string, unknown>)[key]) >= 0,
+        )
+      ) {
+        lastResult = parsed as DigiflazzAutoSyncResult;
+      }
+    } catch {
+      lastResult = null;
+    }
+  }
+  return {
+    enabled: values.tokovoucherAutoSyncEnabled === 'true',
+    intervalDays,
+    enabledSource: sources.tokovoucherAutoSyncEnabled,
+    intervalSource: sources.tokovoucherAutoSyncIntervalDays,
+    enabledEditable: sources.tokovoucherAutoSyncEnabled !== 'environment',
+    intervalEditable: sources.tokovoucherAutoSyncIntervalDays !== 'environment',
+    nextRunAt: values.tokovoucherAutoSyncNextRunAt ?? null,
+    lastRunAt: values.tokovoucherAutoSyncLastRunAt ?? null,
+    lastStatus: values.tokovoucherAutoSyncLastStatus ?? null,
+    lastError: values.tokovoucherAutoSyncLastError ?? null,
+    lastResult,
+  };
+}
+
+export async function saveTokoVoucherAutoSyncState(values: {
+  enabled?: boolean;
+  intervalDays?: DigiflazzAutoSyncInterval;
+  nextRunAt?: string;
+  lastRunAt?: string;
+  lastStatus?: 'scheduled' | 'running' | 'success' | 'failed';
+  lastError?: string;
+  lastResult?: DigiflazzAutoSyncResult;
+  clearLastError?: boolean;
+  clearLastResult?: boolean;
+  clearNextRunAt?: boolean;
+}) {
+  const updates: IntegrationSettingValues = {};
+  const clear: IntegrationSettingName[] = [];
+  if (values.enabled !== undefined) {
+    updates.tokovoucherAutoSyncEnabled = String(values.enabled);
+  }
+  if (values.intervalDays !== undefined) {
+    updates.tokovoucherAutoSyncIntervalDays = String(values.intervalDays);
+  }
+  if (values.nextRunAt !== undefined) {
+    updates.tokovoucherAutoSyncNextRunAt = values.nextRunAt;
+  }
+  if (values.lastRunAt !== undefined) {
+    updates.tokovoucherAutoSyncLastRunAt = values.lastRunAt;
+  }
+  if (values.lastStatus !== undefined) {
+    updates.tokovoucherAutoSyncLastStatus = values.lastStatus;
+  }
+  if (values.lastError !== undefined) {
+    updates.tokovoucherAutoSyncLastError = values.lastError;
+  }
+  if (values.lastResult !== undefined) {
+    updates.tokovoucherAutoSyncLastResult = JSON.stringify(values.lastResult);
+  }
+  if (values.clearLastError) clear.push('tokovoucherAutoSyncLastError');
+  if (values.clearLastResult) clear.push('tokovoucherAutoSyncLastResult');
+  if (values.clearNextRunAt) clear.push('tokovoucherAutoSyncNextRunAt');
+  await saveIntegrationSettings(null, updates, clear);
+}
+
+// The switches and webhook secrets are read together because both the order path
+// and the webhook routes need them.
+export async function getVendorRuntimeConfig() {
+  const { values, sources } = await getIntegrationConfig();
+  return {
+    digiflazzEnabled: values.digiflazzEnabled !== 'false',
+    tokovoucherEnabled: values.tokovoucherEnabled === 'true',
+    digiflazzWebhookSecret: values.digiflazzWebhookSecret ?? '',
+    tokovoucherWebhookSecret: values.tokovoucherWebhookSecret ?? '',
+    digiflazzEnabledSource: sources.digiflazzEnabled,
+    tokovoucherEnabledSource: sources.tokovoucherEnabled,
+    digiflazzWebhookSecretSource: sources.digiflazzWebhookSecret,
+    tokovoucherWebhookSecretSource: sources.tokovoucherWebhookSecret,
   };
 }
 

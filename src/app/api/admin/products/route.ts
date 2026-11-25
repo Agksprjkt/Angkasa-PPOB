@@ -36,6 +36,7 @@ function isProduct(value: unknown): value is Omit<Product, 'id'> {
     'compareAtPrice',
     'status',
     'vendor',
+    'vendorLabel',
   ]);
   if (Object.keys(product).some((key) => !allowedFields.has(key))) return false;
   return (
@@ -52,6 +53,9 @@ function isProduct(value: unknown): value is Omit<Product, 'id'> {
     (product.variant === undefined ||
       product.variant === null ||
       (typeof product.variant === 'string' && product.variant.trim().length <= 60)) &&
+    (product.vendorLabel === undefined ||
+      product.vendorLabel === null ||
+      (typeof product.vendorLabel === 'string' && product.vendorLabel.trim().length <= 40)) &&
     typeof product.description === 'string' &&
     Number.isSafeInteger(product.basePrice) &&
     Number.isSafeInteger(product.sellPriceUser) &&
@@ -64,7 +68,7 @@ function isProduct(value: unknown): value is Omit<Product, 'id'> {
       (Number.isSafeInteger(product.compareAtPrice) &&
         Number(product.compareAtPrice) > Number(product.sellPriceUser))) &&
     (product.status === 'active' || product.status === 'inactive') &&
-    (product.vendor === 'Digiflazz' || product.vendor === 'Manual')
+    (product.vendor === 'Digiflazz' || product.vendor === 'TokoVoucher' || product.vendor === 'Manual')
   );
 }
 

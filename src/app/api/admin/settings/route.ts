@@ -3,6 +3,7 @@ import { getAuth } from '@/lib/server/auth';
 import {
   getIntegrationConfig,
   getDigiflazzAutoSyncConfig,
+  getTokoVoucherAutoSyncConfig,
   integrationSettingNames,
   isIntegrationSettingEnvironmentOverridden,
   isInternalIntegrationSetting,
@@ -14,9 +15,23 @@ import {
 
 export const runtime = 'nodejs';
 
+// Webhook URLs are shown to the admin to paste into the vendor panel. They are
+// built from the configured public origin, not from the request, so the value is
+// correct even when the dashboard is opened over localhost.
+function resolveWebhookBaseUrl() {
+  const configured = process.env.BETTER_AUTH_URL?.trim();
+  try {
+    return new URL(configured ?? 'http://localhost:3000').origin;
+  } catch {
+    return 'http://localhost:3000';
+  }
+}
+
 function snapshotResponse(
   config: Awaited<ReturnType<typeof getIntegrationConfig>>,
   autoSync: Awaited<ReturnType<typeof getDigiflazzAutoSyncConfig>>,
+  tokoVoucherAutoSync: Awaited<ReturnType<typeof getTokoVoucherAutoSyncConfig>>,
+  webhookBaseUrl: string,
 ) {
   const { values, sources } = config;
   const status = (name: IntegrationSettingName) => ({
@@ -51,6 +66,11 @@ function snapshotResponse(
       enableRealTransactionsSource: sources.enableRealTransactions,
       enableRealTransactionsEditable:
         sources.enableRealTransactions !== 'environment',
+      enabled: values.digiflazzEnabled !== 'false',
+      enabledSource: sources.digiflazzEnabled,
+      enabledEditable: sources.digiflazzEnabled !== 'environment',
+      webhookSecret: status('digiflazzWebhookSecret'),
+      webhookUrl: `${webhookBaseUrl}/api/digiflazz/webhook`,
       autoSync,
     },
     qrisly: {
@@ -68,6 +88,26 @@ function snapshotResponse(
       activePaymentGatewaySource: sources.activePaymentGateway,
       activePaymentGatewayEditable: sources.activePaymentGateway !== 'environment',
     },
+    tokovoucher: {
+      memberCode: values.tokovoucherMemberCode ?? '',
+      memberCodeSource: sources.tokovoucherMemberCode,
+      memberCodeEditable: sources.tokovoucherMemberCode !== 'environment',
+      secret: status('tokovoucherSecret'),
+      defaultSignature: status('tokovoucherDefaultSignature'),
+      mode: values.tokovoucherMode === 'production' ? 'production' : 'sandbox',
+      modeSource: sources.tokovoucherMode,
+      modeEditable: sources.tokovoucherMode !== 'environment',
+      enableRealTransactions: values.tokovoucherEnableRealTransactions === 'true',
+      enableRealTransactionsSource: sources.tokovoucherEnableRealTransactions,
+      enableRealTransactionsEditable:
+        sources.tokovoucherEnableRealTransactions !== 'environment',
+      enabled: values.tokovoucherEnabled === 'true',
+      enabledSource: sources.tokovoucherEnabled,
+      enabledEditable: sources.tokovoucherEnabled !== 'environment',
+      webhookSecret: status('tokovoucherWebhookSecret'),
+      webhookUrl: `${webhookBaseUrl}/api/tokovoucher/webhook`,
+      autoSync: tokoVoucherAutoSync,
+    },
   };
 }
 
@@ -78,11 +118,12 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const [config, autoSync] = await Promise.all([
+    const [config, autoSync, tokoVoucherAutoSync] = await Promise.all([
       getIntegrationConfig(),
       getDigiflazzAutoSyncConfig(),
+      getTokoVoucherAutoSyncConfig(),
     ]);
-    return NextResponse.json(snapshotResponse(config, autoSync));
+    return NextResponse.json(snapshotResponse(config, autoSync, tokoVoucherAutoSync, resolveWebhookBaseUrl()));
   } catch (error) {
     console.error(
       '[ADMIN_INTEGRATION_SETTINGS_GET_FAILED]',
@@ -179,6 +220,42 @@ export async function PUT(request: NextRequest) {
     ) {
       return NextResponse.json({ error: 'INVALID_AUTO_SYNC_INTERVAL' }, { status: 400 });
     }
+    if (name === 'tokovoucherMode' && value !== 'sandbox' && value !== 'production') {
+      return NextResponse.json({ error: 'INVALID_TOKOVOUCHER_MODE' }, { status: 400 });
+    }
+    if (
+      name === 'tokovoucherEnableRealTransactions' &&
+      value !== 'true' &&
+      value !== 'false'
+    ) {
+      return NextResponse.json({ error: 'INVALID_TRANSACTION_FLAG' }, { status: 400 });
+    }
+    if (
+      name === 'tokovoucherAutoSyncEnabled' &&
+      value !== 'true' &&
+      value !== 'false'
+    ) {
+      return NextResponse.json({ error: 'INVALID_TRANSACTION_FLAG' }, { status: 400 });
+    }
+    if (
+      name === 'tokovoucherAutoSyncIntervalDays' &&
+      !['7', '14', '30'].includes(value)
+    ) {
+      return NextResponse.json({ error: 'INVALID_AUTO_SYNC_INTERVAL' }, { status: 400 });
+    }
+    if (
+      (name === 'digiflazzEnabled' || name === 'tokovoucherEnabled') &&
+      value !== 'true' &&
+      value !== 'false'
+    ) {
+      return NextResponse.json({ error: 'INVALID_VENDOR_SWITCH' }, { status: 400 });
+    }
+    if (
+      (name === 'digiflazzWebhookSecret' || name === 'tokovoucherWebhookSecret') &&
+      value.length < 16
+    ) {
+      return NextResponse.json({ error: 'WEBHOOK_SECRET_TOO_SHORT' }, { status: 400 });
+    }
     if (
       (name === 'qrislyMode' && value !== 'sandbox' && value !== 'production') ||
       ((name === 'qrislyEnabled') && value !== 'true' && value !== 'false')
@@ -266,11 +343,12 @@ export async function PUT(request: NextRequest) {
     }
 
     await saveIntegrationSettings(session.user.id, updates, clear);
-    const [config, autoSync] = await Promise.all([
+    const [config, autoSync, tokoVoucherAutoSync] = await Promise.all([
       getIntegrationConfig(),
       getDigiflazzAutoSyncConfig(),
+      getTokoVoucherAutoSyncConfig(),
     ]);
-    return NextResponse.json(snapshotResponse(config, autoSync));
+    return NextResponse.json(snapshotResponse(config, autoSync, tokoVoucherAutoSync, resolveWebhookBaseUrl()));
   } catch (error) {
     console.error(
       '[ADMIN_INTEGRATION_SETTINGS_SAVE_FAILED]',

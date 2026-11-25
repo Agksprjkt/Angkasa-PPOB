@@ -1,5 +1,8 @@
 export type UserRole = 'user' | 'agent' | 'admin';
 
+// Kept in sync with src/lib/vendor-registry.ts, which is the runtime source.
+export type ProductVendor = 'Digiflazz' | 'TokoVoucher' | 'Manual';
+
 export type ProductCategory =
   | 'pulsa'
   | 'data'
@@ -34,7 +37,9 @@ export interface Product {
   providerCoverUrl?: string | null;
   providerDescription?: string;
   status: 'active' | 'inactive';
-  vendor: 'Digiflazz' | 'Manual';
+  vendor: ProductVendor;
+  // Storefront source marker, e.g. "Server 1". Empty = show the vendor name.
+  vendorLabel?: string | null;
 }
 
 export type CatalogProduct = Omit<Product, 'sellPriceAgent'> & {
@@ -49,6 +54,24 @@ export interface PromotionalBanner {
   targetPath: string;
   buttonLabel: string;
   sortOrder: number;
+  startsAt: string | null;
+  endsAt: string | null;
+  enabled: boolean;
+}
+
+export type VoucherDiscountType = 'percent' | 'fixed';
+
+export interface Voucher {
+  id: string;
+  code: string;
+  description: string;
+  discountType: VoucherDiscountType;
+  discountValue: number;
+  maxDiscount: number | null;
+  minOrder: number;
+  quotaLimit: number | null;
+  quantityUsed: number;
+  perUserLimit: number | null;
   startsAt: string | null;
   endsAt: string | null;
   enabled: boolean;

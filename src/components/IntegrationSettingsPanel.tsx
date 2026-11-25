@@ -18,8 +18,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { usePPOB } from '@/context/PPOBContext';
+import {
+  vendorStatus,
+  vendorStatusLabel,
+  type VendorStatus,
+} from '@/lib/vendor-registry';
 
-type IntegrationSection = 'whatsapp' | 'digiflazz' | 'qrisly';
+type IntegrationSection = 'whatsapp' | 'digiflazz' | 'tokovoucher' | 'qrisly';
 
 type SettingStatus = {
   configured: boolean;
@@ -72,6 +77,11 @@ type SettingsSnapshot = {
     enableRealTransactions: boolean;
     enableRealTransactionsSource: SettingStatus['source'];
     enableRealTransactionsEditable: boolean;
+    enabled: boolean;
+    enabledSource: SettingStatus['source'];
+    enabledEditable: boolean;
+    webhookSecret: SettingStatus;
+    webhookUrl: string;
     autoSync: AutoSyncSettings;
   };
   qrisly: {
@@ -88,6 +98,25 @@ type SettingsSnapshot = {
     activePaymentGateway: string;
     activePaymentGatewaySource: SettingStatus['source'];
     activePaymentGatewayEditable: boolean;
+  };
+  tokovoucher: {
+    memberCode: string;
+    memberCodeSource: SettingStatus['source'];
+    memberCodeEditable: boolean;
+    secret: SettingStatus;
+    defaultSignature: SettingStatus;
+    mode: string;
+    modeSource: SettingStatus['source'];
+    modeEditable: boolean;
+    enableRealTransactions: boolean;
+    enableRealTransactionsSource: SettingStatus['source'];
+    enableRealTransactionsEditable: boolean;
+    enabled: boolean;
+    enabledSource: SettingStatus['source'];
+    enabledEditable: boolean;
+    webhookSecret: SettingStatus;
+    webhookUrl: string;
+    autoSync: AutoSyncSettings;
   };
 };
 
@@ -118,6 +147,8 @@ const sectionSettings: Record<IntegrationSection, string[]> = {
     'digiflazzApiKey',
     'digiflazzMode',
     'enableRealTransactions',
+    'digiflazzEnabled',
+    'digiflazzWebhookSecret',
   ],
   qrisly: [
     'qrislyApiKey',
@@ -126,34 +157,67 @@ const sectionSettings: Record<IntegrationSection, string[]> = {
     'qrislyEnabled',
     'activePaymentGateway',
   ],
+  tokovoucher: [
+    'tokovoucherMemberCode',
+    'tokovoucherSecret',
+    'tokovoucherDefaultSignature',
+    'tokovoucherMode',
+    'tokovoucherEnableRealTransactions',
+    'tokovoucherEnabled',
+    'tokovoucherWebhookSecret',
+  ],
 };
 
 function IntegrationSummary({
   title,
-  active,
+  status,
 }: {
   title: string;
-  active: boolean;
+  status: VendorStatus;
 }) {
+  const tone = status === 'active'
+    ? 'rounded-md border border-emerald-200 bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800'
+    : status === 'disabled'
+      ? 'rounded-md border border-amber-200 bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800'
+      : 'rounded-md border border-slate-200 bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600';
   return (
     <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-5 [&::-webkit-details-marker]:hidden">
       <span className="font-semibold">{title}</span>
       <span className="flex items-center gap-3">
-        <span
-          className={
-            active
-              ? 'rounded-md border border-emerald-200 bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800'
-              : 'rounded-md border border-slate-200 bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600'
-          }
-        >
-          {active ? 'Aktif' : 'Nonaktif'}
-        </span>
+        <span className={tone}>{vendorStatusLabel(status)}</span>
         <ChevronDown
           aria-hidden="true"
           className="h-4 w-4 text-slate-500 transition-transform group-open:rotate-180"
         />
       </span>
     </summary>
+  );
+}
+
+function WebhookField({
+  id,
+  url,
+  headerHint,
+  copied,
+  onCopy,
+}: {
+  id: string;
+  url: string;
+  headerHint: string;
+  copied: boolean;
+  onCopy: () => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id}>URL webhook</Label>
+      <div className="flex gap-2">
+        <Input id={id} value={url} readOnly className="font-mono text-xs" />
+        <Button type="button" variant="outline" className="shrink-0" onClick={onCopy}>
+          {copied ? 'Tersalin' : 'Salin'}
+        </Button>
+      </div>
+      <p className="text-xs text-slate-500">{headerHint}</p>
+    </div>
   );
 }
 
@@ -248,6 +312,26 @@ export default function IntegrationSettingsPanel({
   const [isSavingAutoSync, setIsSavingAutoSync] = useState(false);
   const [autoSyncDialogError, setAutoSyncDialogError] = useState('');
   const [qrislyApiKey, setQrislyApiKey] = useState('');
+  const [tokovoucherMemberCode, setTokovoucherMemberCode] = useState('');
+  const [tokovoucherSecret, setTokovoucherSecret] = useState('');
+  const [tokovoucherDefaultSignature, setTokovoucherDefaultSignature] = useState('');
+  const [tokovoucherMode, setTokovoucherMode] = useState('sandbox');
+  const [tokovoucherRealTransactions, setTokovoucherRealTransactions] = useState(false);
+  const [tokovoucherAutoSyncInterval, setTokovoucherAutoSyncInterval] = useState<7 | 14 | 30>(7);
+  const [digiflazzEnabled, setDigiflazzEnabled] = useState(true);
+  const [digiflazzWebhookSecret, setDigiflazzWebhookSecret] = useState('');
+  const [tokovoucherEnabled, setTokovoucherEnabled] = useState(false);
+  const [tokovoucherWebhookSecret, setTokovoucherWebhookSecret] = useState('');
+  const [pendingDisable, setPendingDisable] = useState<IntegrationSection | null>(null);
+  const [copiedWebhook, setCopiedWebhook] = useState<string | null>(null);
+  const [tokovoucherPriceList, setTokovoucherPriceList] = useState<{
+    total: number;
+    synced: number;
+    created: number;
+    updated: number;
+    skipped: number;
+  } | null>(null);
+  const [isLoadingTokoVoucherPriceList, setIsLoadingTokoVoucherPriceList] = useState(false);
   const [qrislyQrisId, setQrislyQrisId] = useState('');
   const [qrislyMode, setQrislyMode] = useState('sandbox');
   const [qrislyEnabled, setQrislyEnabled] = useState(false);
@@ -291,6 +375,12 @@ export default function IntegrationSettingsPanel({
         setQrislyMode(body.qrisly.mode || 'sandbox');
         setQrislyEnabled(body.qrisly.enabled);
         setActivePaymentGateway(body.qrisly.activePaymentGateway);
+        setTokovoucherMemberCode(body.tokovoucher.memberCode);
+        setTokovoucherMode(body.tokovoucher.mode || 'sandbox');
+        setTokovoucherRealTransactions(body.tokovoucher.enableRealTransactions);
+        setTokovoucherAutoSyncInterval(body.tokovoucher.autoSync.intervalDays);
+        setDigiflazzEnabled(body.digiflazz.enabled);
+        setTokovoucherEnabled(body.tokovoucher.enabled);
       })
       .catch((error: unknown) => {
         if (active) {
@@ -316,6 +406,40 @@ export default function IntegrationSettingsPanel({
         ? [...new Set([...current, name])]
         : current.filter((value) => value !== name),
     );
+  };
+
+  const copyWebhookUrl = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedWebhook(url);
+      window.setTimeout(() => setCopiedWebhook((current) => current === url ? null : current), 2000);
+    } catch {
+      addToast(
+        'Clipboard ditolak',
+        'Browser menolak akses clipboard. Salin URL-nya manual.',
+        'warning',
+      );
+    }
+  };
+
+  // Switching a vendor off stops new orders, so it asks first. Turning it on is
+  // harmless and applies immediately.
+  const requestVendorToggle = (section: 'digiflazz' | 'tokovoucher', next: boolean) => {
+    if (!next) {
+      setPendingDisable(section);
+      return;
+    }
+    if (section === 'digiflazz') {
+      setDigiflazzEnabled(true);
+    } else {
+      setTokovoucherEnabled(true);
+    }
+  };
+
+  const confirmVendorDisable = () => {
+    if (pendingDisable === 'digiflazz') setDigiflazzEnabled(false);
+    if (pendingDisable === 'tokovoucher') setTokovoucherEnabled(false);
+    setPendingDisable(null);
   };
 
   const handleSave = (section: IntegrationSection) =>
@@ -345,6 +469,30 @@ export default function IntegrationSettingsPanel({
       if (snapshot.digiflazz.modeEditable) values.digiflazzMode = digiflazzMode;
       if (snapshot.digiflazz.enableRealTransactionsEditable) {
         values.enableRealTransactions = String(enableRealTransactions);
+      }
+      if (snapshot.digiflazz.enabledEditable) {
+        values.digiflazzEnabled = String(digiflazzEnabled);
+      }
+      if (digiflazzWebhookSecret) {
+        values.digiflazzWebhookSecret = digiflazzWebhookSecret;
+      }
+    } else if (section === 'tokovoucher') {
+      if (snapshot.tokovoucher.memberCodeEditable) {
+        values.tokovoucherMemberCode = tokovoucherMemberCode;
+      }
+      if (tokovoucherSecret) values.tokovoucherSecret = tokovoucherSecret;
+      if (tokovoucherDefaultSignature) {
+        values.tokovoucherDefaultSignature = tokovoucherDefaultSignature;
+      }
+      if (snapshot.tokovoucher.modeEditable) values.tokovoucherMode = tokovoucherMode;
+      if (snapshot.tokovoucher.enableRealTransactionsEditable) {
+        values.tokovoucherEnableRealTransactions = String(tokovoucherRealTransactions);
+      }
+      if (snapshot.tokovoucher.enabledEditable) {
+        values.tokovoucherEnabled = String(tokovoucherEnabled);
+      }
+      if (tokovoucherWebhookSecret) {
+        values.tokovoucherWebhookSecret = tokovoucherWebhookSecret;
       }
     } else {
       if (qrislyApiKey) values.qrislyApiKey = qrislyApiKey;
@@ -384,12 +532,24 @@ export default function IntegrationSettingsPanel({
         setOpenwaApiKey('');
       } else if (section === 'digiflazz') {
         setDigiflazzApiKey('');
+        setDigiflazzWebhookSecret('');
+      } else if (section === 'tokovoucher') {
+        setTokovoucherSecret('');
+        setTokovoucherDefaultSignature('');
+        setTokovoucherWebhookSecret('');
       } else {
         setQrislyApiKey('');
       }
+      const sectionLabel = section === 'whatsapp'
+        ? 'WhatsApp OTP'
+        : section === 'digiflazz'
+          ? 'Digiflazz'
+          : section === 'tokovoucher'
+            ? 'TokoVoucher'
+            : 'Qrisly';
       addToast(
         'Pengaturan tersimpan',
-        `${section === 'whatsapp' ? 'WhatsApp OTP' : section === 'digiflazz' ? 'Digiflazz' : 'Qrisly'} berhasil diperbarui.`,
+        `${sectionLabel} berhasil diperbarui.`,
         'success',
       );
     } catch (error) {
@@ -455,6 +615,94 @@ export default function IntegrationSettingsPanel({
       );
     } finally {
       setIsLoadingPriceList(false);
+    }
+  };
+
+  const handleTokoVoucherPriceList = async () => {
+    setIsLoadingTokoVoucherPriceList(true);
+    setTokovoucherPriceList(null);
+    try {
+      const response = await fetch('/api/admin/tokovoucher/price-list', {
+        method: 'POST',
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(body.detail ?? body.error ?? 'Daftar produk TokoVoucher gagal dimuat.');
+      }
+      const result = body as {
+        total: number;
+        synced: number;
+        created: number;
+        updated: number;
+        skipped: number;
+      };
+      setTokovoucherPriceList(result);
+      addToast(
+        'Produk TokoVoucher tersinkron',
+        `${result.created} produk baru, ${result.updated} diperbarui, ${result.skipped} dilewati. Produk baru berstatus nonaktif sampai Anda mengaktifkannya.`,
+        'success',
+      );
+      try {
+        await refreshProducts();
+      } catch (error) {
+        addToast(
+          'Katalog belum diperbarui',
+          error instanceof Error ? error.message : 'Muat ulang dashboard untuk melihat produk.',
+          'warning',
+        );
+      }
+      try {
+        const settingsResponse = await fetch('/api/admin/settings');
+        const settingsBody = await settingsResponse.json();
+        if (settingsResponse.ok) setSnapshot(settingsBody as SettingsSnapshot);
+      } catch {
+        addToast(
+          'Status sync belum diperbarui',
+          'Muat ulang pengaturan integrasi untuk melihat status terakhir.',
+          'warning',
+        );
+      }
+    } catch (error) {
+      addToast(
+        'Daftar produk gagal dimuat',
+        error instanceof Error ? error.message : 'Silakan coba kembali.',
+        'error',
+      );
+    } finally {
+      setIsLoadingTokoVoucherPriceList(false);
+    }
+  };
+
+  const persistTokoVoucherAutoSync = async (
+    enabled: boolean,
+    intervalDays: 7 | 14 | 30,
+  ) => {
+    try {
+      const response = await fetch('/api/admin/tokovoucher/auto-sync', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled, intervalDays }),
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(body.error ?? 'Jadwal sync TokoVoucher tidak dapat disimpan.');
+      }
+      setSnapshot((current) => current
+        ? { ...current, tokovoucher: { ...current.tokovoucher, autoSync: body.autoSync } }
+        : current);
+      addToast(
+        enabled ? 'Auto sync aktif' : 'Auto sync nonaktif',
+        enabled
+          ? `Produk akan disinkronkan setiap ${intervalDays} hari.`
+          : 'Produk hanya disinkronkan saat Anda menekan tombol.',
+        'success',
+      );
+    } catch (error) {
+      addToast(
+        'Jadwal sync gagal disimpan',
+        error instanceof Error ? error.message : 'Silakan coba kembali.',
+        'error',
+      );
     }
   };
 
@@ -572,19 +820,32 @@ export default function IntegrationSettingsPanel({
       )
     : snapshot.whatsapp.fonnteToken.configured
     : false;
-  const isDigiflazzActive = Boolean(
-    snapshot &&
-    snapshot.digiflazz.username.trim() &&
-    snapshot.digiflazz.apiKey.configured &&
-    (snapshot.digiflazz.mode !== 'production' ||
-      snapshot.digiflazz.enableRealTransactions),
-  );
   const isQrislyActive = Boolean(
     snapshot &&
     snapshot.qrisly.enabled &&
     snapshot.qrisly.apiKey.configured &&
     snapshot.qrisly.qrisId.trim(),
   );
+  const isTokoVoucherActive = Boolean(
+    snapshot &&
+    snapshot.tokovoucher.memberCode.trim() &&
+    snapshot.tokovoucher.secret.configured &&
+    (snapshot.tokovoucher.mode !== 'production' ||
+      snapshot.tokovoucher.enableRealTransactions),
+  );
+  const digiflazzStatus = vendorStatus({
+    enabled: snapshot?.digiflazz.enabled ?? true,
+    configured: Boolean(
+      snapshot?.digiflazz.username.trim() &&
+      snapshot?.digiflazz.apiKey.configured &&
+      (snapshot.digiflazz.mode !== 'production' ||
+        snapshot.digiflazz.enableRealTransactions),
+    ),
+  });
+  const tokoVoucherStatus = vendorStatus({
+    enabled: snapshot?.tokovoucher.enabled ?? false,
+    configured: isTokoVoucherActive,
+  });
 
   if (isLoading) {
     return (
@@ -603,8 +864,35 @@ export default function IntegrationSettingsPanel({
       {section === 'integrations' && (
       <>
       <Card>
+        <div className="space-y-2 p-5">
+          <h3 className="font-semibold text-slate-900">Webhook H2H</h3>
+          <p className="text-sm text-slate-600">
+            Satu aplikasi melayani dua endpoint webhook. Masing-masing punya
+            autentikasinya sendiri, jadi Digiflazz dan TokoVoucher bisa aktif bersamaan
+            tanpa saling mengganggu.
+          </p>
+          <ul className="space-y-1 text-xs text-slate-500">
+            <li>
+              <code className="font-mono">/api/digiflazz/webhook</code> — HMAC-SHA1 di
+              header <code className="font-mono">X-Hub-Signature</code>
+            </li>
+            <li>
+              <code className="font-mono">/api/tokovoucher/webhook</code> — token di header{' '}
+              <code className="font-mono">X-TokoVoucher-Authorization</code>
+            </li>
+          </ul>
+          <p className="text-xs text-slate-500">
+            Keduanya idempoten: event ganda diabaikan lewat tabel webhook_events, dan
+            status akhir selalu dibaca ulang dari vendor, bukan dari isi body.
+          </p>
+        </div>
+      </Card>
+      <Card>
         <details className="group">
-          <IntegrationSummary title="WhatsApp OTP" active={isWhatsAppActive} />
+          <IntegrationSummary
+            title="WhatsApp OTP"
+            status={vendorStatus({ enabled: true, configured: isWhatsAppActive })}
+          />
           <form
             onSubmit={handleSave('whatsapp')}
             className="space-y-5 border-t border-slate-200 p-5"
@@ -698,7 +986,7 @@ export default function IntegrationSettingsPanel({
 
       <Card>
         <details className="group">
-          <IntegrationSummary title="Digiflazz" active={isDigiflazzActive} />
+          <IntegrationSummary title="Digiflazz" status={digiflazzStatus} />
           <form
             onSubmit={handleSave('digiflazz')}
             className="space-y-5 border-t border-slate-200 p-5"
@@ -886,11 +1174,263 @@ export default function IntegrationSettingsPanel({
             )}
           </div>
         </CardContent>
+        <CardContent className="space-y-4 p-0">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-sm font-medium text-slate-800">Aktifkan vendor</p>
+              <p className="text-xs text-slate-500">
+                Saat dimatikan, pesanan baru ditolak. Pesanan yang sudah berjalan tetap
+                diselesaikan.
+              </p>
+            </div>
+            <label className="flex items-center gap-2 text-xs text-slate-600">
+              <input
+                type="checkbox"
+                checked={digiflazzEnabled}
+                disabled={!snapshot.digiflazz.enabledEditable}
+                onChange={(event) => requestVendorToggle('digiflazz', event.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-blue-700 focus:ring-blue-600"
+              />
+              Aktif
+            </label>
+          </div>
+          <WebhookField
+            id="digiflazz-webhook"
+            url={snapshot.digiflazz.webhookUrl}
+            headerHint="Header: X-Hub-Signature (HMAC-SHA1 dari body)"
+            copied={copiedWebhook === snapshot.digiflazz.webhookUrl}
+            onCopy={() => void copyWebhookUrl(snapshot.digiflazz.webhookUrl)}
+          />
+          <SecretField
+            id="digiflazz-webhook-secret"
+            label="Webhook secret"
+            status={snapshot.digiflazz.webhookSecret}
+            value={digiflazzWebhookSecret}
+            onChange={setDigiflazzWebhookSecret}
+            clear={clearSettings.includes('digiflazzWebhookSecret')}
+            onClearChange={(checked) => toggleClear('digiflazzWebhookSecret', checked)}
+          />
+        </CardContent>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <Button type="submit" disabled={savingSections.includes('digiflazz')}>
             {savingSections.includes('digiflazz') ? 'Menyimpan…' : 'Simpan Digiflazz'}
           </Button>
         </div>
+          </form>
+        </details>
+      </Card>
+
+      <Card>
+        <details className="group">
+          <IntegrationSummary title="TokoVoucher" status={tokoVoucherStatus} />
+          <form
+            onSubmit={handleSave('tokovoucher')}
+            className="space-y-5 border-t border-slate-200 p-5"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm text-slate-500">
+                Mitra H2H kedua. Ambil kredensial di Member Area TokoVoucher, lalu sinkronkan
+                produk secara manual. Produk baru selalu masuk sebagai nonaktif.
+              </p>
+              <Badge variant={tokovoucherMode === 'production' ? 'warning' : 'outline'}>
+                {tokovoucherMode === 'production' ? 'PRODUKSI' : 'SANDBOX'}
+              </Badge>
+            </div>
+            <CardContent className="space-y-5 p-0">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="tokovoucher-member-code">Member code</Label>
+                  <span className="text-xs text-slate-500">
+                    {sourceText(snapshot.tokovoucher.memberCodeSource)}
+                  </span>
+                </div>
+                <Input
+                  id="tokovoucher-member-code"
+                  value={tokovoucherMemberCode}
+                  onChange={(event) => setTokovoucherMemberCode(event.target.value)}
+                  disabled={!snapshot.tokovoucher.memberCodeEditable}
+                  placeholder="MEMBER20220801UAXH95"
+                  autoComplete="off"
+                />
+              </div>
+              <SecretField
+                id="tokovoucher-secret"
+                label="Secret key"
+                status={snapshot.tokovoucher.secret}
+                value={tokovoucherSecret}
+                onChange={setTokovoucherSecret}
+                clear={clearSettings.includes('tokovoucherSecret')}
+                onClearChange={(checked) => toggleClear('tokovoucherSecret', checked)}
+              />
+              <SecretField
+                id="tokovoucher-default-signature"
+                label="Signature default"
+                status={snapshot.tokovoucher.defaultSignature}
+                value={tokovoucherDefaultSignature}
+                onChange={setTokovoucherDefaultSignature}
+                clear={clearSettings.includes('tokovoucherDefaultSignature')}
+                onClearChange={(checked) =>
+                  toggleClear('tokovoucherDefaultSignature', checked)
+                }
+              />
+              <p className="text-xs text-slate-500">
+                Signature default dipakai endpoint /member dan /member/produk/full.
+                Transaksi memakai md5(member code:secret:ref id) yang dihitung server.
+              </p>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="tokovoucher-mode">Mode</Label>
+                    <span className="text-xs text-slate-500">
+                      {sourceText(snapshot.tokovoucher.modeSource)}
+                    </span>
+                  </div>
+                  <select
+                    id="tokovoucher-mode"
+                    value={tokovoucherMode}
+                    onChange={(event) => setTokovoucherMode(event.target.value)}
+                    disabled={!snapshot.tokovoucher.modeEditable}
+                    className="flex h-9 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+                  >
+                    <option value="sandbox">Sandbox</option>
+                    <option value="production">Produksi</option>
+                  </select>
+                </div>
+                <label className="flex min-h-11 items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={tokovoucherRealTransactions}
+                    disabled={!snapshot.tokovoucher.enableRealTransactionsEditable}
+                    onChange={(event) => setTokovoucherRealTransactions(event.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 text-blue-700 focus:ring-blue-600"
+                  />
+                  Izinkan transaksi nyata
+                </label>
+              </div>
+              <p className="text-xs text-slate-500">
+                Sakelar ini terpisah dari Digiflazz. Mengaktifkan salah satu tidak
+                mengaktifkan yang lain.
+              </p>
+            </CardContent>
+            <CardContent className="space-y-4 p-0">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-sm font-medium text-slate-800">Aktifkan vendor</p>
+              <p className="text-xs text-slate-500">
+                Saat dimatikan, pesanan baru ditolak. Pesanan yang sudah berjalan tetap
+                diselesaikan.
+              </p>
+            </div>
+            <label className="flex items-center gap-2 text-xs text-slate-600">
+              <input
+                type="checkbox"
+                checked={tokovoucherEnabled}
+                disabled={!snapshot.tokovoucher.enabledEditable}
+                onChange={(event) => requestVendorToggle('tokovoucher', event.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-blue-700 focus:ring-blue-600"
+              />
+              Aktif
+            </label>
+          </div>
+          <WebhookField
+            id="tokovoucher-webhook"
+            url={snapshot.tokovoucher.webhookUrl}
+            headerHint="Header: X-TokoVoucher-Authorization (token statis)"
+            copied={copiedWebhook === snapshot.tokovoucher.webhookUrl}
+            onCopy={() => void copyWebhookUrl(snapshot.tokovoucher.webhookUrl)}
+          />
+          <SecretField
+            id="tokovoucher-webhook-secret"
+            label="Webhook secret"
+            status={snapshot.tokovoucher.webhookSecret}
+            value={tokovoucherWebhookSecret}
+            onChange={setTokovoucherWebhookSecret}
+            clear={clearSettings.includes('tokovoucherWebhookSecret')}
+            onClearChange={(checked) => toggleClear('tokovoucherWebhookSecret', checked)}
+          />
+        </CardContent>
+        <div className="flex flex-wrap items-center gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isLoadingTokoVoucherPriceList || savingSections.includes('tokovoucher')}
+                onClick={() => void handleTokoVoucherPriceList()}
+              >
+                {isLoadingTokoVoucherPriceList ? 'Menyinkronkan?' : 'Ambil & sinkronkan produk'}
+              </Button>
+              <Button type="submit" disabled={savingSections.includes('tokovoucher')}>
+                {savingSections.includes('tokovoucher') ? 'Menyimpan?' : 'Simpan TokoVoucher'}
+              </Button>
+            </div>
+            {tokovoucherPriceList && (
+              <p role="status" className="text-xs text-emerald-700">
+                {tokovoucherPriceList.created} produk baru, {tokovoucherPriceList.updated}{' '}
+                diperbarui, {tokovoucherPriceList.skipped} dilewati.
+              </p>
+            )}
+            <CardContent className="space-y-3 p-0">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-medium text-slate-800">Sync otomatis</p>
+                <label className="flex items-center gap-2 text-xs text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={snapshot.tokovoucher.autoSync.enabled}
+                    disabled={!snapshot.tokovoucher.autoSync.enabledEditable}
+                    onChange={(event) =>
+                      void persistTokoVoucherAutoSync(
+                        event.target.checked,
+                        tokovoucherAutoSyncInterval,
+                      )
+                    }
+                    className="h-4 w-4 rounded border-slate-300 text-blue-700 focus:ring-blue-600"
+                  />
+                  Aktifkan
+                </label>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="tokovoucher-sync-interval">Sinkronkan setiap</Label>
+                <select
+                  id="tokovoucher-sync-interval"
+                  value={tokovoucherAutoSyncInterval}
+                  disabled={!snapshot.tokovoucher.autoSync.intervalEditable}
+                  onChange={(event) => {
+                    const interval = Number(event.target.value) as 7 | 14 | 30;
+                    setTokovoucherAutoSyncInterval(interval);
+                    if (snapshot.tokovoucher.autoSync.enabled) {
+                      void persistTokoVoucherAutoSync(true, interval);
+                    }
+                  }}
+                  className="flex h-9 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+                >
+                  <option value={7}>7 hari</option>
+                  <option value={14}>14 hari</option>
+                  <option value={30}>30 hari</option>
+                </select>
+              </div>
+              <p className="text-xs text-slate-500">
+                Default nonaktif. Produk hanya diperbarui saat Anda menekan tombol atau
+                saat jadwal ini dinyalakan.
+              </p>
+              <div className="space-y-1 text-xs text-slate-500">
+                <p>Sync terakhir: {formatSyncDate(snapshot.tokovoucher.autoSync.lastRunAt)}</p>
+                <p>Jadwal berikutnya: {formatSyncDate(snapshot.tokovoucher.autoSync.nextRunAt)}</p>
+                {snapshot.tokovoucher.autoSync.lastStatus && (
+                  <p>Status: {snapshot.tokovoucher.autoSync.lastStatus}</p>
+                )}
+                {snapshot.tokovoucher.autoSync.lastResult && (
+                  <p>
+                    Hasil: {snapshot.tokovoucher.autoSync.lastResult.created} baru,{' '}
+                    {snapshot.tokovoucher.autoSync.lastResult.updated} diperbarui,{' '}
+                    {snapshot.tokovoucher.autoSync.lastResult.skipped} dilewati
+                  </p>
+                )}
+                {snapshot.tokovoucher.autoSync.lastError && (
+                  <p role="status" className="text-rose-700">
+                    Sync terakhir gagal.
+                  </p>
+                )}
+              </div>
+            </CardContent>
           </form>
         </details>
       </Card>
@@ -946,6 +1486,34 @@ export default function IntegrationSettingsPanel({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <Dialog
+        open={pendingDisable !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDisable(null);
+        }}
+      >
+        <DialogContent role="dialog" aria-modal="true">
+          <DialogHeader>
+            <DialogTitle>Nonaktifkan vendor ini?</DialogTitle>
+            <DialogDescription>
+              Pesanan baru ke vendor ini akan ditolak. Pesanan yang sudah berjalan tetap
+              diselesaikan lewat webhook dan reconciler, dan kredensial tidak dihapus.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setPendingDisable(null)}
+            >
+              Batal
+            </Button>
+            <Button type="button" onClick={confirmVendorDisable}>
+              Ya, nonaktifkan
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       </>
       )}
 
@@ -954,7 +1522,7 @@ export default function IntegrationSettingsPanel({
         <details className="group">
           <IntegrationSummary
             title="Qrisly QRIS otomatis"
-            active={isQrislyActive}
+            status={vendorStatus({ enabled: true, configured: isQrislyActive })}
           />
           <form
             onSubmit={handleSave('qrisly')}

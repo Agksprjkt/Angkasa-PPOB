@@ -24,6 +24,8 @@ function parseDate(value: unknown): Date | null | undefined {
   return Number.isNaN(date.getTime()) ? undefined : date;
 }
 
+// A banner may be image-only, so a title is optional. What is required is
+// something to show and somewhere to go.
 function isSafePath(value: string) {
   if (/^#[A-Za-z0-9_-]+$/.test(value)) return true;
   if (!value.startsWith('/') || value.startsWith('//') || value.includes('\\')) {
@@ -31,6 +33,15 @@ function isSafePath(value: string) {
   }
   try {
     return new URL(value, 'https://store.invalid').origin === 'https://store.invalid';
+  } catch {
+    return false;
+  }
+}
+
+function isSafeTarget(value: string) {
+  if (isSafePath(value)) return true;
+  try {
+    return new URL(value).protocol === 'https:';
   } catch {
     return false;
   }
@@ -65,19 +76,21 @@ function parseBanner(value: unknown): BannerInput | null {
 
   const startsAt = parseDate(value.startsAt);
   const endsAt = parseDate(value.endsAt);
+  const title = typeof value.title === 'string' ? value.title.trim() : null;
+  const description = typeof value.description === 'string' ? value.description.trim() : null;
+  const imageUrl = typeof value.imageUrl === 'string' ? value.imageUrl.trim() : null;
+  const buttonLabel = typeof value.buttonLabel === 'string' ? value.buttonLabel.trim() : null;
   if (
-    typeof value.title !== 'string' ||
-    !value.title.trim() ||
-    value.title.trim().length > 120 ||
-    typeof value.description !== 'string' ||
-    value.description.length > 500 ||
-    typeof value.imageUrl !== 'string' ||
-    !isSafeImageUrl(value.imageUrl) ||
+    title === null ||
+    title.length > 120 ||
+    description === null ||
+    description.length > 500 ||
+    imageUrl === null ||
+    !isSafeImageUrl(imageUrl) ||
+    buttonLabel === null ||
+    buttonLabel.length > 40 ||
     typeof value.targetPath !== 'string' ||
-    !isSafePath(value.targetPath) ||
-    typeof value.buttonLabel !== 'string' ||
-    !value.buttonLabel.trim() ||
-    value.buttonLabel.trim().length > 40 ||
+    !isSafeTarget(value.targetPath) ||
     !Number.isSafeInteger(value.sortOrder) ||
     Number(value.sortOrder) < 0 ||
     startsAt === undefined ||
@@ -87,13 +100,15 @@ function parseBanner(value: unknown): BannerInput | null {
   ) {
     return null;
   }
+  // Nothing to render and nothing to click is not a banner.
+  if (!imageUrl && !title) return null;
 
   return {
-    title: value.title.trim(),
-    description: value.description.trim(),
-    imageUrl: value.imageUrl.trim(),
+    title,
+    description,
+    imageUrl,
     targetPath: value.targetPath,
-    buttonLabel: value.buttonLabel.trim(),
+    buttonLabel,
     sortOrder: Number(value.sortOrder),
     startsAt,
     endsAt,
@@ -178,7 +193,13 @@ export async function PATCH(request: NextRequest) {
       .then((rows) => rows[0]);
     if (!current) return NextResponse.json({ error: 'PROMOTION_NOT_FOUND' }, { status: 404 });
 
-    const merged = parseBanner({ ...current, ...payload.updates });
+    // Only the editable columns may be merged: the stored row also carries id and
+    // the timestamps, which parseBanner rejects as unknown fields.
+    const { id: currentId, createdAt, updatedAt, ...editable } = current;
+    void currentId;
+    void createdAt;
+    void updatedAt;
+    const merged = parseBanner({ ...editable, ...payload.updates });
     if (!merged) {
       return NextResponse.json({ error: 'INVALID_PROMOTION_UPDATE' }, { status: 400 });
     }

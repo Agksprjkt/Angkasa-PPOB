@@ -11,6 +11,7 @@ import type {
   ProductCategory,
   TransactionStatus,
 } from '@/types/ppob';
+import type { ProductVendor } from '@/lib/vendor-registry';
 import { DEFAULT_STORE_NAME } from '@/lib/store-branding';
 
 const createdAt = () =>
@@ -111,7 +112,7 @@ export const products = sqliteTable(
   'products',
   {
     id: text('id').primaryKey(),
-    vendorCode: text('vendorCode').notNull().unique(),
+    vendorCode: text('vendorCode').notNull(),
     name: text('name').notNull(),
     category: text('category').$type<ProductCategory>().notNull(),
     operator: text('operator').notNull(),
@@ -128,13 +129,20 @@ export const products = sqliteTable(
     sellPriceAgent: integer('sellPriceAgent').notNull(),
     compareAtPrice: integer('compareAtPrice'),
     status: text('status').$type<'active' | 'inactive'>().notNull().default('active'),
-    vendor: text('vendor').$type<'Digiflazz' | 'Manual'>().notNull(),
+    vendor: text('vendor').$type<ProductVendor>().notNull(),
+    // Free-text source marker shown on the storefront, e.g. "Server 1". Empty
+    // means the vendor name is used instead.
+    vendorLabel: text('vendorLabel'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (table) => [
+    // A vendor code is only unique inside its own vendor: Digiflazz and
+    // TokoVoucher both ship an "FF5".
+    uniqueIndex('products_vendor_code_unique').on(table.vendor, table.vendorCode),
     index('products_category_status_idx').on(table.category, table.status),
     index('products_variant_idx').on(table.category, table.operator, table.variant),
+    index('products_vendor_status_idx').on(table.vendor, table.status),
     check('products_prices_nonnegative', sql`
       ${table.basePrice} >= 0
       AND ${table.sellPriceUser} >= 0
@@ -276,6 +284,8 @@ export const invoices = sqliteTable(
     guestAccessTokenHash: text('guestAccessTokenHash'),
     vaNumber: text('vaNumber'),
     proofUrl: text('proofUrl'),
+    voucherCode: text('voucherCode'),
+    discountAmount: integer('discountAmount').notNull().default(0),
     expiresAt: integer('expiresAt', { mode: 'timestamp_ms' }).notNull(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -317,6 +327,8 @@ export const transactions = sqliteTable(
       .default(false),
     manualReviewAt: integer('manualReviewAt', { mode: 'timestamp_ms' }),
     sn: text('sn'),
+    voucherCode: text('voucherCode'),
+    discountAmount: integer('discountAmount').notNull().default(0),
     vendorResponse: text('vendorResponse', { mode: 'json' }).$type<{
       code: string;
       message: string;
@@ -334,6 +346,7 @@ export const transactions = sqliteTable(
       reconciliation?: {
         buyerSkuCode: string;
         customerNo: string;
+        vendor?: ProductVendor;
         mode?: 'sandbox' | 'production';
       };
     }>(),
@@ -366,6 +379,73 @@ export const flashSaleReservations = sqliteTable(
     uniqueIndex('flash_sale_reservations_transaction_unique').on(table.transactionId),
     index('flash_sale_reservations_offer_status_idx').on(table.offerId, table.status),
     check('flash_sale_reservations_single_order', sql`
+      (${table.invoiceId} IS NOT NULL AND ${table.transactionId} IS NULL)
+      OR (${table.invoiceId} IS NULL AND ${table.transactionId} IS NOT NULL)
+    `),
+  ],
+);
+
+export const vouchers = sqliteTable(
+  'vouchers',
+  {
+    id: text('id').primaryKey(),
+    code: text('code').notNull().unique(),
+    description: text('description').notNull().default(''),
+    discountType: text('discountType').$type<'percent' | 'fixed'>().notNull(),
+    discountValue: integer('discountValue').notNull(),
+    maxDiscount: integer('maxDiscount'),
+    minOrder: integer('minOrder').notNull().default(0),
+    quotaLimit: integer('quotaLimit'),
+    quantityUsed: integer('quantityUsed').notNull().default(0),
+    perUserLimit: integer('perUserLimit'),
+    startsAt: integer('startsAt', { mode: 'timestamp_ms' }),
+    endsAt: integer('endsAt', { mode: 'timestamp_ms' }),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(false),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    index('vouchers_enabled_schedule_idx').on(table.enabled, table.startsAt, table.endsAt),
+    check('vouchers_discount_value_positive', sql`${table.discountValue} > 0`),
+    check('vouchers_percent_max_100', sql`
+      ${table.discountType} <> 'percent' OR ${table.discountValue} <= 100
+    `),
+    check('vouchers_amounts_nonnegative', sql`
+      ${table.minOrder} >= 0
+      AND ${table.quantityUsed} >= 0
+      AND (${table.maxDiscount} IS NULL OR ${table.maxDiscount} > 0)
+      AND (${table.quotaLimit} IS NULL OR ${table.quotaLimit} >= 0)
+      AND (${table.perUserLimit} IS NULL OR ${table.perUserLimit} > 0)
+    `),
+    check('vouchers_valid_schedule', sql`
+      ${table.startsAt} IS NULL OR ${table.endsAt} IS NULL OR ${table.startsAt} < ${table.endsAt}
+    `),
+  ],
+);
+
+export const voucherRedemptions = sqliteTable(
+  'voucher_redemptions',
+  {
+    id: text('id').primaryKey(),
+    voucherId: text('voucherId')
+      .notNull()
+      .references(() => vouchers.id, { onDelete: 'restrict' }),
+    userId: text('userId').references(() => users.id, { onDelete: 'set null' }),
+    invoiceId: text('invoiceId').references(() => invoices.id, { onDelete: 'restrict' }),
+    transactionId: text('transactionId').references(() => transactions.id, { onDelete: 'restrict' }),
+    code: text('code').notNull(),
+    discountAmount: integer('discountAmount').notNull(),
+    status: text('status').$type<'reserved' | 'consumed' | 'released'>().notNull(),
+    expiresAt: integer('expiresAt', { mode: 'timestamp_ms' }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    uniqueIndex('voucher_redemptions_invoice_unique').on(table.invoiceId),
+    uniqueIndex('voucher_redemptions_transaction_unique').on(table.transactionId),
+    index('voucher_redemptions_voucher_status_idx').on(table.voucherId, table.status),
+    index('voucher_redemptions_user_idx').on(table.userId, table.voucherId, table.status),
+    check('voucher_redemptions_single_order', sql`
       (${table.invoiceId} IS NOT NULL AND ${table.transactionId} IS NULL)
       OR (${table.invoiceId} IS NULL AND ${table.transactionId} IS NOT NULL)
     `),

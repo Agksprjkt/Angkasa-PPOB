@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import type { Product, ProductCategory } from '@/types/ppob';
+import { vendorLabelOf } from '@/lib/vendor-registry';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -112,6 +113,7 @@ function ProviderDetailPanel({
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [productDraft, setProductDraft] = useState<{
     variant: string;
+    vendorLabel: string;
     sellPriceUser: number;
     sellPriceAgent: number;
     compareAtPrice: number | null;
@@ -279,6 +281,7 @@ function ProviderDetailPanel({
     setEditingProductId(product.id);
     setProductDraft({
       variant: product.variant ?? '',
+      vendorLabel: product.vendorLabel ?? '',
       sellPriceUser: product.sellPriceUser,
       sellPriceAgent: product.sellPriceAgent,
       compareAtPrice: product.compareAtPrice ?? null,
@@ -290,10 +293,12 @@ function ProviderDetailPanel({
     if (!productDraft) return;
     setPendingProductIds((current) => new Set(current).add(product.id));
     try {
-      // An empty type hands the product back to the Digiflazz sync.
+      // An empty type hands the product back to the vendor sync.
       const variant = productDraft.variant.trim();
+      const vendorLabel = productDraft.vendorLabel.trim();
       const saved = await updateProduct(product.id, {
         variant: variant || null,
+        vendorLabel: vendorLabel || null,
         sellPriceUser: productDraft.sellPriceUser,
         sellPriceAgent: productDraft.sellPriceAgent,
         compareAtPrice: productDraft.compareAtPrice,
@@ -581,6 +586,19 @@ function ProviderDetailPanel({
                           {editing ? (
                             <div className="mt-1 space-y-1">
                               <Input
+                                aria-label={`Sumber produk ${product.name}`}
+                                placeholder="Sumber (mis. Server 1)"
+                                maxLength={40}
+                                value={productDraft.vendorLabel}
+                                onChange={(event) => setProductDraft((current) => current
+                                  ? { ...current, vendorLabel: event.target.value }
+                                  : current)}
+                                className="h-8 w-44 text-xs"
+                              />
+                              <span className="block text-[10px] text-slate-500">
+                                Tampil sebagai penanda di toko. Kosongkan untuk memakai nama vendor.
+                              </span>
+                              <Input
                                 aria-label={`Tipe produk ${product.name}`}
                                 placeholder="Tipe (mis. Combo Lite)"
                                 maxLength={60}
@@ -591,19 +609,26 @@ function ProviderDetailPanel({
                                 className="h-8 w-44 text-xs"
                               />
                               <span className="block text-[10px] text-slate-500">
-                                Kosongkan agar tipe diambil ulang dari Digiflazz.
+                                Kosongkan agar tipe diambil ulang dari sync vendor.
                               </span>
                             </div>
-                          ) : product.variant ? (
-                            <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                              product.variantSource === 'manual'
-                                ? 'bg-sky-50 text-sky-700'
-                                : 'bg-slate-100 text-slate-600'
-                            }`}>
-                              {product.variant}
-                              {product.variantSource === 'manual' ? ' · manual' : ''}
-                            </span>
-                          ) : null}
+                          ) : (
+                            <div className="mt-1 flex flex-wrap items-center gap-1">
+                              <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+                                {vendorLabelOf(product)}
+                              </span>
+                              {product.variant && (
+                                <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                  product.variantSource === 'manual'
+                                    ? 'bg-sky-50 text-sky-700'
+                                    : 'bg-slate-100 text-slate-600'
+                                }`}>
+                                  {product.variant}
+                                  {product.variantSource === 'manual' ? ' · manual' : ''}
+                                </span>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </td>
@@ -1031,6 +1056,7 @@ export default function ProductManagementPanel({
             >
               <option value="all">Semua vendor</option>
               <option value="Digiflazz">Digiflazz</option>
+              <option value="TokoVoucher">TokoVoucher</option>
               <option value="Manual">Manual</option>
             </select>
           </div>

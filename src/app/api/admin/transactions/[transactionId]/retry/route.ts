@@ -8,6 +8,7 @@ import { getDigiflazzConfig } from '@/lib/server/integration-settings';
 import { balanceLedger, products, transactions, users } from '@/lib/server/db/schema';
 import { applyBalanceDelta } from '@/lib/server/wallet';
 import { createOrderCode } from '@/lib/order-codes';
+import { isOrderableVendor } from '@/lib/vendor-registry';
 import {
   buildDigiflazzCustomerNo,
   mapDigiflazzStatus,
@@ -112,8 +113,20 @@ export async function POST(
     .where(and(eq(products.id, original.productId), eq(products.status, 'active')))
     .limit(1)
     .then((rows) => rows[0]);
-  if (!product || product.vendor !== 'Digiflazz') {
+  if (!product || !isOrderableVendor(product.vendor)) {
     return NextResponse.json({ error: 'RETRY_PRODUCT_UNAVAILABLE' }, { status: 409 });
+  }
+  // Manual retry re-charges the buyer and re-sends the order, and the refund path
+  // below is written for Digiflazz. A TokoVoucher pending order is already settled
+  // by the reconciler, so retrying it by hand would risk a double charge.
+  if (product.vendor !== 'Digiflazz') {
+    return NextResponse.json(
+      {
+        error: 'RETRY_NOT_SUPPORTED_FOR_VENDOR',
+        message: 'Pesanan TokoVoucher diselesaikan otomatis oleh reconciler, bukan lewat retry manual.',
+      },
+      { status: 409 },
+    );
   }
   if (!Number.isSafeInteger(original.amount) || original.amount <= 0) {
     return NextResponse.json({ error: 'INVALID_TRANSACTION_AMOUNT' }, { status: 409 });

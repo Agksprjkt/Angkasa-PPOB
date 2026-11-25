@@ -3,19 +3,21 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuth } from '@/lib/server/auth';
 import { getDatabase } from '@/lib/server/db/client';
-import { getActivePaymentGateway, getDigiflazzConfig, getQrislyConfig } from '@/lib/server/integration-settings';
+import { getActivePaymentGateway, getDigiflazzConfig, getQrislyConfig, getVendorRuntimeConfig } from '@/lib/server/integration-settings';
 import { createQrislyPayment, type QrislyConfig } from '@/lib/server/qrisly';
 import { isValidQrislyAmount } from '@/lib/deposit-validation';
 import { normalizePhone } from '@/lib/phone';
 import { invoices, products } from '@/lib/server/db/schema';
 import { createOrderCode } from '@/lib/order-codes';
 import { validateOrderDestination } from '@/lib/order-input-validation';
+import { isOrderableVendor, isVendorEnabled } from '@/lib/vendor-registry';
 import {
   createFlashSaleReservation,
   releaseFlashSaleCapacity,
   reserveFlashSaleCapacity,
 } from '@/lib/server/flash-sales';
 import { clientAddress, consumeRateLimit } from '@/lib/server/rate-limit';
+import { claimVoucherSlot, previewVoucherForOrder } from '@/lib/server/vouchers';
 import { flashSaleReservations } from '@/lib/server/db/schema';
 
 export const runtime = 'nodejs';
@@ -152,6 +154,7 @@ export async function POST(request: NextRequest) {
         'customerEmail',
         'flashSaleOfferId',
         'flashSalePriceExpected',
+        'voucherCode',
       ].includes(key),
     )
   ) {
@@ -177,6 +180,9 @@ export async function POST(request: NextRequest) {
     ? payload.flashSaleOfferId.trim()
     : undefined;
   const flashSalePriceExpected = payload.flashSalePriceExpected;
+  const voucherCode = typeof payload.voucherCode === 'string' && payload.voucherCode.trim()
+    ? payload.voucherCode.trim().slice(0, 32)
+    : undefined;
   const destination = typeof payload.destination === 'string' ? payload.destination.trim() : '';
   const customerName = typeof payload.customerName === 'string'
     ? payload.customerName.trim().slice(0, 100)
@@ -206,6 +212,7 @@ export async function POST(request: NextRequest) {
     || ('flashSaleOfferId' in payload && typeof payload.flashSaleOfferId !== 'string')
     || ('flashSalePriceExpected' in payload &&
       !Number.isSafeInteger(payload.flashSalePriceExpected))
+    || ('voucherCode' in payload && typeof payload.voucherCode !== 'string')
   ) {
     return NextResponse.json({ error: 'INVALID_ORDER_CONTACT' }, { status: 400 });
   }
@@ -313,8 +320,23 @@ export async function POST(request: NextRequest) {
   if (destinationError) {
     return NextResponse.json({ error: destinationError }, { status: 400 });
   }
-  if (product.vendor !== 'Digiflazz') {
+  if (!isOrderableVendor(product.vendor)) {
     return NextResponse.json({ error: 'PRODUCT_VENDOR_NOT_CONFIGURED' }, { status: 503 });
+  }
+  // A switched-off vendor must not take new orders. Pending invoices are settled
+  // by the reconciler, so disabling a vendor never strands an existing order.
+  const switches = await getVendorRuntimeConfig();
+  if (!isVendorEnabled(product.vendor, {
+    digiflazzEnabled: switches.digiflazzEnabled,
+    tokovoucherEnabled: switches.tokovoucherEnabled,
+  })) {
+    return NextResponse.json(
+      {
+        error: 'VENDOR_DISABLED',
+        message: `${product.vendor} sedang dinonaktifkan oleh admin.`,
+      },
+      { status: 409 },
+    );
   }
 
   const regularPrice = session?.user.role === 'agent'
@@ -382,6 +404,33 @@ export async function POST(request: NextRequest) {
         price = reservation.salePrice;
       }
 
+      // The voucher discounts the price after any flash sale. Validate before the
+      // invoice insert (the redemption row references the invoice) and claim the
+      // quota slot once the invoice exists.
+      let voucherCodeSnapshot: string | null = null;
+      let discountAmount = 0;
+      let voucherClaim: { voucherId: string; code: string; discountAmount: number } | null = null;
+      if (voucherCode) {
+        const voucherResult = await previewVoucherForOrder(tx, {
+          code: voucherCode,
+          basePrice: price,
+          userId: session?.user.id ?? null,
+          now,
+        });
+        if (!voucherResult.ok) {
+          if (saleOfferId) await releaseFlashSaleCapacity(tx, saleOfferId, now);
+          return { error: voucherResult.error };
+        }
+        voucherCodeSnapshot = voucherResult.code;
+        discountAmount = voucherResult.discountAmount;
+        price = voucherResult.finalPrice;
+        voucherClaim = {
+          voucherId: voucherResult.voucherId,
+          code: voucherResult.code,
+          discountAmount: voucherResult.discountAmount,
+        };
+      }
+
       if (!isValidQrislyAmount(price)) {
         if (saleOfferId) await releaseFlashSaleCapacity(tx, saleOfferId, now);
         return { error: 'QRISLY_AMOUNT_OUT_OF_RANGE' as const };
@@ -411,6 +460,8 @@ export async function POST(request: NextRequest) {
           paymentMethod: 'qrisly',
           paymentStatus: 'unpaid',
           transactionStatus: 'pending',
+          voucherCode: voucherCodeSnapshot,
+          discountAmount,
           expiresAt,
           idempotencyKey,
           guestAccessTokenHash,
@@ -454,6 +505,18 @@ export async function POST(request: NextRequest) {
           expiresAt,
           now,
         );
+      }
+      if (voucherClaim) {
+        const claimed = await claimVoucherSlot(tx, {
+          ...voucherClaim,
+          userId: session?.user.id ?? null,
+          reference: { invoiceId: invoice.id },
+          expiresAt,
+          now,
+        });
+        // Validated moments ago inside this transaction, so a lost slot means the
+        // row changed underneath us; fail instead of honouring a stale discount.
+        if (!claimed) throw new Error('VOUCHER_QUOTA_EXHAUSTED');
       }
       return { invoice };
     });

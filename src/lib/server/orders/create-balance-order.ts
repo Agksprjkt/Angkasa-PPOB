@@ -13,7 +13,10 @@ import {
   users,
 } from '@/lib/server/db/schema';
 import { applyBalanceDelta } from '@/lib/server/wallet';
-import { getDigiflazzConfig } from '@/lib/server/integration-settings';
+import { getDigiflazzConfig, getTokoVoucherConfig, getVendorRuntimeConfig } from '@/lib/server/integration-settings';
+import { isOrderableVendor, isVendorEnabled } from '@/lib/vendor-registry';
+import { createTokoVoucherTransaction } from '@/lib/tokovoucher';
+import { mapTokoVoucherStatus } from '@/lib/tokovoucher-protocol';
 import { validateOrderDestination } from '@/lib/order-input-validation';
 import {
   buildDigiflazzCustomerNo,
@@ -28,6 +31,7 @@ import {
   reserveFlashSaleCapacity,
   settleFlashSaleReservation,
 } from '@/lib/server/flash-sales';
+import { previewVoucherForOrder, claimVoucherSlot, settleVoucherForTransaction } from '@/lib/server/vouchers';
 
 type OrderServiceBody = {
   error?: string;
@@ -45,6 +49,7 @@ export type CreateBalanceOrderInput = {
   transactionPin?: string;
   flashSaleOfferId?: string;
   flashSalePriceExpected?: number;
+  voucherCode?: string;
   user: {
     id: string;
     phoneNumber?: string | null;
@@ -64,6 +69,16 @@ async function getDatabaseBalance(userId: string) {
     .where(eq(users.id, userId))
     .limit(1);
   return rows[0]?.balance ?? 0;
+}
+
+// Only the two switches matter here; the full runtime config also carries
+// webhook secrets that this path has no use for.
+async function getVendorSwitchValues() {
+  const config = await getVendorRuntimeConfig();
+  return {
+    digiflazzEnabled: config.digiflazzEnabled,
+    tokovoucherEnabled: config.tokovoucherEnabled,
+  };
 }
 
 export async function createBalanceOrder(
@@ -89,28 +104,6 @@ export async function createBalanceOrder(
     }
   }
 
-  let vendorConfig: Awaited<ReturnType<typeof getDigiflazzConfig>>;
-  try {
-    vendorConfig = await getDigiflazzConfig();
-  } catch (error) {
-    console.error(
-      '[ORDER_VENDOR_SETTINGS_UNAVAILABLE]',
-      error instanceof Error ? error.message : 'Unknown settings error',
-    );
-    return { status: 503, body: { error: 'VENDOR_SETTINGS_UNAVAILABLE' } };
-  }
-
-  const { username, apiKey, mode, enableRealTransactions } = vendorConfig;
-  if (!username || !apiKey || (mode !== 'sandbox' && mode !== 'production')) {
-    return {
-      status: 503,
-      body: {
-        error: 'VENDOR_NOT_CONFIGURED',
-        message: 'Wallet purchases are unavailable until Digiflazz is configured server-side.',
-      },
-    };
-  }
-
   const db = getDatabase();
   const product = await db
     .select()
@@ -131,11 +124,72 @@ export async function createBalanceOrder(
   if (destinationError) {
     return { status: 400, body: { error: destinationError } };
   }
-  if (product.vendor !== 'Digiflazz') {
+  if (!isOrderableVendor(product.vendor)) {
     return { status: 503, body: { error: 'PRODUCT_VENDOR_NOT_CONFIGURED' } };
   }
-  if (mode === 'production' && !enableRealTransactions) {
-    return { status: 503, body: { error: 'PRODUCTION_TRANSACTIONS_DISABLED' } };
+  // Checked before any balance movement: a switched-off vendor must not take new
+  // orders. Pending orders are settled elsewhere, so they keep working.
+  if (!isVendorEnabled(product.vendor, await getVendorSwitchValues())) {
+    return {
+      status: 409,
+      body: {
+        error: 'VENDOR_DISABLED',
+        message: `${product.vendor} sedang dinonaktifkan oleh admin.`,
+      },
+    };
+  }
+
+  // Credentials are resolved after the product is known, because each vendor has
+  // its own configuration and its own real-transaction switch.
+  let vendorConfig: Awaited<ReturnType<typeof getDigiflazzConfig>>;
+  let tokoVoucherConfig: Awaited<ReturnType<typeof getTokoVoucherConfig>> | null = null;
+  try {
+    if (product.vendor === 'TokoVoucher') {
+      tokoVoucherConfig = await getTokoVoucherConfig();
+      vendorConfig = {
+        username: '',
+        apiKey: '',
+        mode: 'sandbox' as const,
+        enableRealTransactions: false,
+      };
+    } else {
+      vendorConfig = await getDigiflazzConfig();
+    }
+  } catch (error) {
+    console.error(
+      '[ORDER_VENDOR_SETTINGS_UNAVAILABLE]',
+      error instanceof Error ? error.message : 'Unknown settings error',
+    );
+    return { status: 503, body: { error: 'VENDOR_SETTINGS_UNAVAILABLE' } };
+  }
+
+  const { username, apiKey, mode, enableRealTransactions } = vendorConfig;
+  if (product.vendor === 'Digiflazz') {
+    if (!username || !apiKey || (mode !== 'sandbox' && mode !== 'production')) {
+      return {
+        status: 503,
+        body: {
+          error: 'VENDOR_NOT_CONFIGURED',
+          message: 'Wallet purchases are unavailable until Digiflazz is configured server-side.',
+        },
+      };
+    }
+    if (mode === 'production' && !enableRealTransactions) {
+      return { status: 503, body: { error: 'PRODUCTION_TRANSACTIONS_DISABLED' } };
+    }
+  } else {
+    if (!tokoVoucherConfig?.memberCode || !tokoVoucherConfig.secret) {
+      return {
+        status: 503,
+        body: {
+          error: 'VENDOR_NOT_CONFIGURED',
+          message: 'Wallet purchases are unavailable until TokoVoucher is configured server-side.',
+        },
+      };
+    }
+    if (tokoVoucherConfig.mode === 'production' && !tokoVoucherConfig.enableRealTransactions) {
+      return { status: 503, body: { error: 'PRODUCTION_TRANSACTIONS_DISABLED' } };
+    }
   }
 
   const regularPrice = input.user.role === 'agent'
@@ -230,6 +284,33 @@ export async function createBalanceOrder(
         orderPrice = reservation.salePrice;
       }
 
+      // Voucher applies on top of any flash-sale price. Validation happens before
+      // the order insert because the redemption row references the order; the
+      // quota slot is claimed right after the order exists.
+      let voucherCode: string | null = null;
+      let discountAmount = 0;
+      let voucherClaim: { voucherId: string; code: string; discountAmount: number } | null = null;
+      if (input.voucherCode) {
+        const voucherResult = await previewVoucherForOrder(tx, {
+          code: input.voucherCode,
+          basePrice: orderPrice,
+          userId: input.user.id,
+          now,
+        });
+        if (!voucherResult.ok) {
+          if (saleOfferId) await releaseFlashSaleCapacity(tx, saleOfferId, now);
+          return { voucherError: voucherResult.error };
+        }
+        voucherCode = voucherResult.code;
+        discountAmount = voucherResult.discountAmount;
+        orderPrice = voucherResult.finalPrice;
+        voucherClaim = {
+          voucherId: voucherResult.voucherId,
+          code: voucherResult.code,
+          discountAmount: voucherResult.discountAmount,
+        };
+      }
+
       const updatedUsers = await tx
         .update(users)
         .set({
@@ -263,15 +344,21 @@ export async function createBalanceOrder(
           profit: orderPrice - product.basePrice,
           status: 'pending',
           paymentMethod: 'balance',
+          voucherCode,
+          discountAmount,
           vendorResponse: {
             code: '',
-            message: 'Menunggu respons Digiflazz.',
+            message: `Menunggu respons ${product.vendor}.`,
             rc: '',
             rawTime: new Date().toISOString(),
             reconciliation: {
               buyerSkuCode: product.vendorCode,
               customerNo: buildDigiflazzCustomerNo(destination, serverZoneId).customerNo,
-              mode,
+              // The reconciler needs the vendor to know whom to ask.
+              vendor: product.vendor,
+              mode: product.vendor === 'TokoVoucher'
+                ? tokoVoucherConfig!.mode
+                : mode === 'production' ? 'production' as const : 'sandbox' as const,
             },
           },
         })
@@ -344,6 +431,19 @@ export async function createBalanceOrder(
           now,
         );
       }
+      if (voucherClaim) {
+        const claimed = await claimVoucherSlot(tx, {
+          ...voucherClaim,
+          userId: input.user.id,
+          reference: { transactionId: inserted[0].id },
+          expiresAt: null,
+          now,
+        });
+        // The quota was validated moments ago inside this transaction, so a lost
+        // race here means the row changed underneath us; fail loudly instead of
+        // charging a price the voucher did not earn.
+        if (!claimed) throw new Error('VOUCHER_QUOTA_EXHAUSTED');
+      }
 
       return {
         conflict: false as const,
@@ -359,6 +459,10 @@ export async function createBalanceOrder(
 
     if ('flashSaleError' in result) {
       return { status: 409, body: { error: result.flashSaleError } };
+    }
+
+    if ('voucherError' in result) {
+      return { status: 409, body: { error: result.voucherError } };
     }
 
     if ('conflict' in result && result.conflict) {
@@ -383,31 +487,70 @@ export async function createBalanceOrder(
   }
 
   try {
-    const providerResponse: unknown = await createDigiflazzTransaction(
-      { username, apiKey, mode },
-      {
-        buyerSkuCode: product.vendorCode,
-        customerNo: buildDigiflazzCustomerNo(destination, serverZoneId).customerNo,
-        refId: referenceId,
-      },
-    );
+    // Both vendors are normalised into the same shape so the settle/refund logic
+    // below stays identical regardless of who fulfils the order.
+    let status: 'success' | 'pending' | 'failed';
+    let vendorMessage: string;
+    let vendorCode: string;
+    let vendorSn: string | null;
+    try {
+      if (product.vendor === 'TokoVoucher') {
+        const response = await createTokoVoucherTransaction(
+          {
+            memberCode: tokoVoucherConfig!.memberCode,
+            secret: tokoVoucherConfig!.secret,
+            defaultSignature: tokoVoucherConfig!.defaultSignature,
+            mode: tokoVoucherConfig!.mode,
+          },
+          {
+            refId: referenceId,
+            vendorCode: product.vendorCode,
+            destination,
+            serverZoneId,
+          },
+        );
+        if (response.refId !== referenceId) {
+          return {
+            status: 202,
+            body: { transaction: createdTransaction, error: 'VENDOR_RESPONSE_UNCLEAR' },
+          };
+        }
+        status = mapTokoVoucherStatus(response.status);
+        vendorMessage = response.message;
+        vendorCode = response.status;
+        vendorSn = response.sn || null;
+      } else {
+        const providerResponse: unknown = await createDigiflazzTransaction(
+          { username: username ?? '', apiKey: apiKey ?? '', mode: mode === 'production' ? 'production' : 'sandbox' },
+          {
+            buyerSkuCode: product.vendorCode,
+            customerNo: buildDigiflazzCustomerNo(destination, serverZoneId).customerNo,
+            refId: referenceId,
+          },
+        );
 
-    const response = readDigiflazzTransactionResponse(providerResponse);
-    if (!response || response.refId !== referenceId) {
-      return {
-        status: 202,
-        body: {
-          transaction: createdTransaction,
-          error: 'VENDOR_RESPONSE_UNCLEAR',
-        },
-      };
+        const response = readDigiflazzTransactionResponse(providerResponse);
+        if (!response || response.refId !== referenceId) {
+          return {
+            status: 202,
+            body: { transaction: createdTransaction, error: 'VENDOR_RESPONSE_UNCLEAR' },
+          };
+        }
+        status = mapDigiflazzStatus(response.status, response.rc);
+        vendorMessage = response.message;
+        vendorCode = response.rc;
+        vendorSn = status === 'success' ? response.sn ?? null : null;
+      }
+    } catch (error) {
+      // Both vendors: an HTTP error or timeout leaves the order pending so the
+      // webhook or reconciler can still settle it. Never fail-and-refund here.
+      throw error;
     }
 
-    const status = mapDigiflazzStatus(response.status, response.rc);
     const vendorResponse = {
-      code: response.rc,
-      message: response.message.slice(0, 500),
-      rc: response.rc,
+      code: vendorCode,
+      message: vendorMessage.slice(0, 500),
+      rc: vendorCode,
       rawTime: new Date().toISOString(),
       reconciliation: createdTransaction.vendorResponse?.reconciliation,
     };
@@ -444,6 +587,7 @@ export async function createBalanceOrder(
           'released',
           new Date(),
         );
+        await settleVoucherForTransaction(tx, updated.id, 'released', new Date());
         return updated;
       });
     } else {
@@ -452,7 +596,7 @@ export async function createBalanceOrder(
           .update(transactions)
           .set({
             status,
-            sn: status === 'success' ? response.sn ?? null : null,
+            sn: status === 'success' ? vendorSn : null,
             vendorResponse,
             updatedAt: new Date(),
           })
@@ -466,6 +610,7 @@ export async function createBalanceOrder(
             'consumed',
             new Date(),
           );
+          await settleVoucherForTransaction(tx, updated.id, 'consumed', new Date());
         }
         return updated;
       });

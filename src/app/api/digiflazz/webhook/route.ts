@@ -2,7 +2,7 @@ import { eq } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/lib/server/db/client';
 import { products, transactions } from '@/lib/server/db/schema';
-import { getDigiflazzConfig } from '@/lib/server/integration-settings';
+import { getDigiflazzConfig, getVendorRuntimeConfig } from '@/lib/server/integration-settings';
 import {
   isDigiflazzStatusCheckSafe,
   readDigiflazzTransactionResponse,
@@ -19,6 +19,13 @@ function noStore(body: unknown, status = 200) {
   return NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
 }
 
+// Read through the integration settings so the secret can be rotated from the
+// dashboard; the environment still wins when it is set.
+async function getWebhookSecret() {
+  const config = await getVendorRuntimeConfig();
+  return config.digiflazzWebhookSecret;
+}
+
 function readRefId(value: unknown): string {
   if (typeof value !== 'object' || value === null) return '';
   const data = (value as Record<string, unknown>).data;
@@ -32,7 +39,7 @@ function readRefId(value: unknown): string {
 // Digiflazz (or applied directly when the signed payload already names a state),
 // so a forged body cannot mark an order successful.
 export async function POST(request: NextRequest) {
-  const secret = process.env.DIGIFLAZZ_WEBHOOK_SECRET;
+  const secret = await getWebhookSecret();
   if (!secret || Buffer.byteLength(secret) < 16) {
     return noStore({ error: 'DIGIFLAZZ_WEBHOOK_NOT_CONFIGURED' }, 503);
   }

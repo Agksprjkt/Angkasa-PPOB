@@ -18,6 +18,7 @@ import {
   expireFlashSaleReservationForInvoice,
   settleFlashSaleReservation,
 } from '@/lib/server/flash-sales';
+import { expireVoucherForInvoice, settleVoucherUsage } from '@/lib/server/vouchers';
 
 // QRIS can settle shortly after our local expiry. Keep polling the provider
 // through this grace window so a late-but-real payment is never marked expired.
@@ -180,6 +181,7 @@ export async function refreshQrislyOrder(invoiceId: string) {
             .returning();
           if (updated) {
             await expireFlashSaleReservationForInvoice(tx, updated.id, now);
+            await expireVoucherForInvoice(tx, updated.id, now);
           }
           return [updated];
         });
@@ -244,6 +246,7 @@ export async function refreshQrislyOrder(invoiceId: string) {
           .returning();
         if (reviewInvoice) {
           await expireFlashSaleReservationForInvoice(tx, reviewInvoice.id, now);
+          await expireVoucherForInvoice(tx, reviewInvoice.id, now);
         }
         return [reviewInvoice];
       });
@@ -261,6 +264,7 @@ export async function refreshQrislyOrder(invoiceId: string) {
           .returning();
         if (expiredInvoice) {
           await expireFlashSaleReservationForInvoice(tx, expiredInvoice.id, now);
+          await expireVoucherForInvoice(tx, expiredInvoice.id, now);
         }
         return [expiredInvoice];
       });
@@ -315,6 +319,7 @@ export async function refreshQrislyOrder(invoiceId: string) {
         'consumed',
         now,
       );
+      await settleVoucherUsage(tx, { invoiceId: invoice.id }, 'consumed', now);
       return { invoice: updatedInvoice, transaction: createdTransaction };
     });
 
@@ -357,6 +362,7 @@ export async function cancelQrislyInvoice(invoiceId: string) {
       .returning();
     if (!updated) return null;
     await expireFlashSaleReservationForInvoice(tx, updated.id, now);
+    await expireVoucherForInvoice(tx, updated.id, now);
     return updated;
   });
   if (cancelled) return cancelled;
@@ -400,6 +406,7 @@ export async function renewQrislyInvoice(invoice: typeof invoices.$inferSelect) 
       .returning();
     if (!retired) return null;
     await expireFlashSaleReservationForInvoice(tx, retired.id, now);
+    await expireVoucherForInvoice(tx, retired.id, now);
 
     const [inserted] = await tx
       .insert(invoices)
