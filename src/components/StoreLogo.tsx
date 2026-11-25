@@ -9,6 +9,9 @@ type StoreLogoProps = {
   imageClassName?: string;
   textClassName?: string;
   alt?: string;
+  // Force the invert filter. Used where the background is dark regardless of the
+  // active theme, such as the footer.
+  onDark?: boolean;
 };
 
 // Shows the uploaded store logo; falls back to the store name text when no logo
@@ -18,6 +21,7 @@ export default function StoreLogo({
   imageClassName,
   textClassName,
   alt,
+  onDark = false,
 }: StoreLogoProps) {
   const { storeName, storeLogoUrl } = usePPOB();
   // Track which URL failed so a newly uploaded logo renders without an effect.
@@ -30,13 +34,24 @@ export default function StoreLogo({
         src={storeLogoUrl}
         alt={alt ?? storeName}
         onError={() => setFailedUrl(storeLogoUrl)}
-        className={cn('object-contain', imageClassName, className)}
+        // An uploaded logo is usually dark ink on transparency, so it disappears
+        // on a dark surface. The filter is applied in CSS for the dark theme and
+        // forced here when the container is always dark.
+        data-on-dark={onDark ? 'true' : undefined}
+        className={cn('store-logo object-contain', imageClassName, className)}
       />
     );
   }
 
   return (
-    <span className={cn('truncate font-semibold text-slate-900', textClassName, className)}>
+    <span
+      className={cn(
+        'truncate font-semibold text-slate-900',
+        onDark && 'text-white',
+        textClassName,
+        className,
+      )}
+    >
       {storeName}
     </span>
   );

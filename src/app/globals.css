@@ -664,6 +664,14 @@
   display: none;
 }
 
+/* An uploaded logo is usually dark ink on transparency, so it vanishes on a dark
+   surface. Invert only the light areas, then rotate the hue back so brand colours
+   stay recognisable instead of turning into their complement. */
+.liquid-theme[data-theme="dark"] .store-logo,
+.store-logo[data-on-dark="true"] {
+  filter: invert(1) hue-rotate(180deg) brightness(1.1);
+}
+
 .liquid-theme[data-theme="dark"] .liquid-surface,
 .liquid-theme[data-theme="dark"] .liquid-product-card,
 .liquid-theme[data-theme="dark"] .liquid-category-button,

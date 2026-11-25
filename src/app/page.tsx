@@ -10,13 +10,11 @@ import PromotionSlider from '@/components/PromotionSlider';
 import StorefrontSections from '@/components/StorefrontSections';
 import ProductCatalog from '@/components/ProductCatalog';
 import StoreFooter from '@/components/StoreFooter';
+import WhatsAppFloat from '@/components/WhatsAppFloat';
 import DirectOrderModal from '@/components/DirectOrderModal';
 import DepositModal from '@/components/DepositModal';
 import AuthModal from '@/components/AuthModal';
 import type { BeforeInstallPromptEvent } from '@/types/pwa';
-import {
-  Headphones,
-} from 'lucide-react';
 
 const productCategories: ProductCategory[] = [
   'pulsa',
@@ -171,20 +169,7 @@ export default function HomePage() {
                   </section>
 
                   {!isCategoryMenu && supportPhone && (
-                    <a
-                      href={`https://wa.me/${supportPhone.replace(/\D/g, '').replace(/^0/, '62')}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="liquid-surface flex w-fit max-w-full items-center justify-between gap-3 rounded-2xl border border-white/70 bg-white/55 p-4 text-xs text-slate-600 backdrop-blur-xl transition-colors hover:bg-white/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
-                    >
-                      <span className="flex min-w-0 items-center gap-2">
-                        <Headphones className="h-4 w-4 shrink-0 text-blue-600" aria-hidden="true" />
-                        <span className="min-w-0">
-                          <span className="block font-bold text-slate-900">Bantuan WhatsApp</span>
-                          <span className="block truncate text-[11px] text-slate-500">{supportPhone}</span>
-                        </span>
-                      </span>
-                    </a>
+                    <WhatsAppFloat phone={supportPhone} storeName={storeName} />
                   )}
                 </div>
               </div>
@@ -195,6 +180,7 @@ export default function HomePage() {
           storeName={storeName}
           tagline={storeTagline}
           socialLinks={storeSocialLinks}
+          supportPhone={supportPhone}
         />
 
       {/* Direct Order Modal (Anonymous / Direct Payment or Wallet) */}
