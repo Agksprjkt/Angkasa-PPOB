@@ -68,8 +68,14 @@ integration settings panel:
 | `logoFile` | Header brand mark |
 | `iconFile` | PWA manifest and `apple-touch-icon` |
 | `faviconFile` | Browser tab icon |
+| `ogImageFile` | Open Graph / Twitter card image (1200×630 recommended) |
 | `socialLinks` | JSON array of `{ type, label, value }` shown in the home footer |
 | `supportPhone` | Legacy help number, still used by payment and receipt screens |
+| `seoTitle` / `seoDescription` | Search result title and description |
+| `ogTitle` / `ogDescription` | Link preview copy; empty falls back to the SEO copy |
+| `seoNoIndex` | `true` hides the store from crawlers and empties `robots.txt` |
+| `googleSiteVerification` / `bingSiteVerification` | Webmaster meta tokens |
+| `indexNowKey` | Serves `/<key>.txt` and drives the IndexNow submission |
 
 Icons fall back down the chain `faviconFile → iconFile → logoFile → bundled
 default`, so uploading one file still improves every surface. The home footer

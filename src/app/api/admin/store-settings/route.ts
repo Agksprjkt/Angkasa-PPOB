@@ -16,6 +16,8 @@ const textLimits = {
   supportPhone: 40,
   seoTitle: 70,
   seoDescription: 320,
+  ogTitle: 100,
+  ogDescription: 320,
   googleSiteVerification: 200,
   bingSiteVerification: 200,
 } as const;
@@ -58,13 +60,21 @@ export async function PUT(request: NextRequest) {
   }
 
   const input = payload as Record<string, unknown>;
-  const allowedKeys = [...editableFields, 'socialLinks'];
+  const allowedKeys = [...editableFields, 'socialLinks', 'seoNoIndex'];
   if (Object.keys(input).some((key) => !allowedKeys.includes(key))) {
     return NextResponse.json({ error: 'UNKNOWN_SETTING' }, { status: 400 });
   }
   const updates: Partial<Record<EditableField, string>> = {};
+  let seoNoIndex: boolean | undefined;
   for (const [field, rawValue] of Object.entries(input)) {
     if (field === 'socialLinks') continue;
+    if (field === 'seoNoIndex') {
+      if (typeof rawValue !== 'boolean') {
+        return NextResponse.json({ error: 'INVALID_SETTING_VALUE', field }, { status: 400 });
+      }
+      seoNoIndex = rawValue;
+      continue;
+    }
     if (typeof rawValue !== 'string' || rawValue.length > textLimits[field as EditableField]) {
       return NextResponse.json({ error: 'INVALID_SETTING_VALUE', field }, { status: 400 });
     }
@@ -106,6 +116,7 @@ export async function PUT(request: NextRequest) {
       .update(storeSettings)
       .set({
         ...updates,
+        ...(seoNoIndex === undefined ? {} : { seoNoIndex }),
         ...(socialLinksJson === undefined ? {} : { socialLinks: socialLinksJson }),
         updatedAt: new Date(),
       })

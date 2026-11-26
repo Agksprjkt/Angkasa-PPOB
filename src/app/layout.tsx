@@ -6,26 +6,51 @@ import ToastContainer from '@/components/ToastContainer';
 import CookieConsent from '@/components/CookieConsent';
 import ChatSupportButton from '@/components/ChatSupportButton';
 import { getStoreSettings } from '@/lib/server/store-settings';
+import { resolveSeo, storeAssetUrl } from '@/lib/seo';
 
 export const dynamic = 'force-dynamic';
 
 export async function generateMetadata(): Promise<Metadata> {
   const settings = await getStoreSettings();
-  const defaultDescription =
-    'Platform PPOB Lengkap & Cepat. Beli pulsa reguler, paket kuota data, token listrik PLN, dan bayar tagihan.';
+  const seo = resolveSeo(settings);
   // Each asset has its own job: favicon is the browser tab, icon is the installed
   // app, logo is the header. Fall back down the chain so a single upload still
   // improves everything.
   const iconFile = settings.iconFile ?? settings.logoFile;
   const faviconFile = settings.faviconFile ?? iconFile;
-  const assetUrl = (file: string | null) =>
-    file ? `/api/store-assets/${encodeURIComponent(file)}` : null;
-  const icon = assetUrl(iconFile) ?? '/icons/icon-192.png';
-  const favicon = assetUrl(faviconFile) ?? '/icons/icon.svg';
+  const icon = storeAssetUrl(iconFile) ?? '/icons/icon-192.png';
+  const favicon = storeAssetUrl(faviconFile) ?? '/icons/icon.svg';
+  const baseUrl = new URL(process.env.BETTER_AUTH_URL ?? 'http://localhost:3000');
+  const noIndex = settings.seoNoIndex;
+  const images = seo.imageUrl
+    ? [{ url: seo.imageUrl, alt: seo.imageAlt }]
+    : undefined;
   return {
-    metadataBase: new URL(process.env.BETTER_AUTH_URL ?? 'http://localhost:3000'),
-    title: settings.seoTitle || settings.storeName,
-    description: settings.seoDescription || settings.description || defaultDescription,
+    metadataBase: baseUrl,
+    title: seo.title,
+    description: seo.description,
+    applicationName: settings.storeName,
+    keywords: [settings.storeName, 'PPOB', 'pulsa', 'paket data', 'token listrik']
+      .filter(Boolean),
+    alternates: { canonical: '/' },
+    robots: noIndex
+      ? { index: false, follow: false }
+      : { index: true, follow: true },
+    openGraph: {
+      type: 'website',
+      url: '/',
+      siteName: settings.storeName,
+      title: seo.ogTitle,
+      description: seo.ogDescription,
+      locale: 'id_ID',
+      images,
+    },
+    twitter: {
+      card: seo.imageUrl ? 'summary_large_image' : 'summary',
+      title: seo.ogTitle,
+      description: seo.ogDescription,
+      images: images?.map((image) => image.url),
+    },
     verification: settings.googleSiteVerification
       ? { google: settings.googleSiteVerification }
       : undefined,
@@ -53,11 +78,37 @@ export const viewport: Viewport = {
   maximumScale: 5,
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const settings = await getStoreSettings();
+  const baseUrl = new URL(process.env.BETTER_AUTH_URL ?? 'http://localhost:3000');
+  const logoUrl = storeAssetUrl(settings.iconFile ?? settings.logoFile);
+  // One graph for the store as a whole: search engines read the site name and
+  // the merchant identity from here instead of guessing from page markup.
+  const structuredData = {
+    '@context': 'https://schema.org',
+    '@graph': [
+      {
+        '@type': 'Organization',
+        '@id': new URL('/#organization', baseUrl).toString(),
+        name: settings.storeName,
+        url: baseUrl.toString(),
+        description: settings.description || settings.tagline || undefined,
+        logo: logoUrl ? new URL(logoUrl, baseUrl).toString() : undefined,
+      },
+      {
+        '@type': 'WebSite',
+        '@id': new URL('/#website', baseUrl).toString(),
+        name: settings.storeName,
+        url: baseUrl.toString(),
+        inLanguage: 'id-ID',
+        publisher: { '@id': new URL('/#organization', baseUrl).toString() },
+      },
+    ],
+  };
   return (
     <html lang="id" className="liquid-theme" data-theme="light" suppressHydrationWarning>
       <head>
@@ -70,6 +121,11 @@ export default function RootLayout({
           rel="stylesheet"
         />
         <meta name="apple-mobile-web-app-capable" content="yes" />
+        <script
+          type="application/ld+json"
+          // Values come from admin settings; JSON.stringify escapes them.
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
+        />
       </head>
       <body className="min-h-screen flex flex-col text-slate-900">
         <Script id="ppob-theme-init" strategy="beforeInteractive">

@@ -162,6 +162,13 @@
       "when": 1795666467993,
       "tag": "0022_organic_gambit",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1795695839046,
+      "tag": "0023_next_machine_man",
+      "breakpoints": true
     }
   ]
 }

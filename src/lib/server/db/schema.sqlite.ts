@@ -583,11 +583,15 @@ export const storeSettings = sqliteTable('store_settings', {
   logoFile: text('logoFile'),
   iconFile: text('iconFile'),
   faviconFile: text('faviconFile'),
+  ogImageFile: text('ogImageFile'),
   // JSON array of { type, label, value }. Small and always read together with
   // the profile, so a separate table would only add joins.
   socialLinks: text('socialLinks').notNull().default('[]'),
   seoTitle: text('seoTitle').notNull().default(''),
   seoDescription: text('seoDescription').notNull().default(''),
+  seoNoIndex: integer('seoNoIndex', { mode: 'boolean' }).notNull().default(false),
+  ogTitle: text('ogTitle').notNull().default(''),
+  ogDescription: text('ogDescription').notNull().default(''),
   googleSiteVerification: text('googleSiteVerification').notNull().default(''),
   bingSiteVerification: text('bingSiteVerification').notNull().default(''),
   indexNowKey: text('indexNowKey'),

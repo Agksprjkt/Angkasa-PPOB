@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { usePPOB } from '@/context/PPOBContext';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { LoadingState } from '@/components/ui/crystal-loader';
+import { Switch } from '@/components/ui/switch';
 import { Plus, Trash2 } from 'lucide-react';
 import {
   parseSocialLinks,
@@ -29,6 +30,10 @@ type StoreSettings = {
   socialLinks: string;
   seoTitle: string;
   seoDescription: string;
+  seoNoIndex: boolean;
+  ogTitle: string;
+  ogDescription: string;
+  ogImageFile: string | null;
   googleSiteVerification: string;
   bingSiteVerification: string;
   indexNowKey: string | null;
@@ -36,12 +41,12 @@ type StoreSettings = {
 
 type StoreSettingsView = 'profile' | 'seo';
 
-type AssetKind = 'logo' | 'icon' | 'favicon';
+type AssetKind = 'logo' | 'icon' | 'favicon' | 'og';
 
 const assetMeta: Record<AssetKind, {
   title: string;
   hint: string;
-  field: 'logoFile' | 'iconFile' | 'faviconFile';
+  field: 'logoFile' | 'iconFile' | 'faviconFile' | 'ogImageFile';
   previewClass: string;
 }> = {
   logo: {
@@ -62,6 +67,12 @@ const assetMeta: Record<AssetKind, {
     field: 'faviconFile',
     previewClass: 'h-24 w-24 rounded-2xl object-contain p-3',
   },
+  og: {
+    title: 'Gambar pratinjau (OG)',
+    hint: 'Muncul saat tautan dibagikan. Disarankan 1200×630 px, maks. 2 MB.',
+    field: 'ogImageFile',
+    previewClass: 'h-24 w-full rounded-lg object-cover',
+  },
 };
 
 const emptySettings: StoreSettings = {
@@ -75,6 +86,10 @@ const emptySettings: StoreSettings = {
   socialLinks: '[]',
   seoTitle: '',
   seoDescription: '',
+  seoNoIndex: false,
+  ogTitle: '',
+  ogDescription: '',
+  ogImageFile: null,
   googleSiteVerification: '',
   bingSiteVerification: '',
   indexNowKey: null,
@@ -90,6 +105,12 @@ export default function StoreSettingsPanel({ view }: { view: StoreSettingsView }
   const [isSavingContacts, setIsSavingContacts] = useState(false);
   const [isGeneratingKey, setIsGeneratingKey] = useState(false);
   const [isSubmittingIndexNow, setIsSubmittingIndexNow] = useState(false);
+  // Read without an effect so server and client first paint agree.
+  const storeOrigin = useSyncExternalStore(
+    () => () => {},
+    () => window.location.origin,
+    () => '',
+  );
 
   // Contact rows are edited as a draft array and saved together, so a half-typed
   // row never reaches the public footer.
@@ -299,6 +320,18 @@ export default function StoreSettingsPanel({ view }: { view: StoreSettingsView }
     }
   };
 
+  const ogPreviewFile = settings.ogImageFile ?? settings.iconFile ?? settings.logoFile;
+  const ogPreviewUrl = ogPreviewFile
+    ? `/api/store-assets/${encodeURIComponent(ogPreviewFile)}`
+    : null;
+  const siteHost = (() => {
+    try {
+      return new URL(storeOrigin).host;
+    } catch {
+      return '';
+    }
+  })();
+
   if (view === 'profile') {
     return (
       <Card>
@@ -314,7 +347,7 @@ export default function StoreSettingsPanel({ view }: { view: StoreSettingsView }
           ) : (
             <>
               <div className="grid gap-4 sm:grid-cols-3">
-                {(Object.keys(assetMeta) as AssetKind[]).map((kind) => {
+                {(['logo', 'icon', 'favicon'] as AssetKind[]).map((kind) => {
                   const meta = assetMeta[kind];
                   const filename = settings[meta.field];
                   const busy = uploadingKind === kind || deletingKind === kind;
@@ -598,6 +631,133 @@ export default function StoreSettingsPanel({ view }: { view: StoreSettingsView }
 
       <Card>
         <CardHeader>
+          <CardTitle className="text-base">Pratinjau saat dibagikan</CardTitle>
+          <CardDescription>
+            Open Graph dipakai WhatsApp, Facebook, Telegram, X, dan LinkedIn. Kosongkan untuk
+            memakai judul dan deskripsi hasil pencarian.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {isLoading ? (
+            <LoadingState message="Memuat pratinjau tautan…" />
+          ) : (
+            <>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="og-title">Judul pratinjau</Label>
+                  <Input
+                    id="og-title"
+                    maxLength={100}
+                    value={settings.ogTitle}
+                    onChange={(event) => updateSetting('ogTitle', event.target.value)}
+                    placeholder={settings.seoTitle || settings.storeName || 'Nama toko'}
+                  />
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label htmlFor="og-description">Deskripsi pratinjau</Label>
+                  <textarea
+                    id="og-description"
+                    rows={2}
+                    maxLength={320}
+                    value={settings.ogDescription}
+                    onChange={(event) => updateSetting('ogDescription', event.target.value)}
+                    placeholder={settings.seoDescription || settings.description || 'Ringkasan singkat toko.'}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="store-asset-og">{assetMeta.og.title}</Label>
+                <div className="flex flex-wrap items-start gap-3">
+                  <div className="flex h-24 w-40 items-center justify-center overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+                    {ogPreviewFile ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={`/api/store-assets/${encodeURIComponent(ogPreviewFile)}`}
+                        alt={`Pratinjau ${settings.storeName}`}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <span className="px-2 text-center text-[10px] font-semibold text-slate-400">
+                        Memakai icon aplikasi
+                      </span>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <Input
+                      id="store-asset-og"
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      disabled={uploadingKind === 'og' || deletingKind === 'og'}
+                      onChange={(event) => {
+                        void uploadAsset('og', event.target.files?.[0]);
+                        event.currentTarget.value = '';
+                      }}
+                      className="max-w-sm"
+                    />
+                    <p className="text-[11px] text-slate-500">
+                      {assetMeta.og.hint}
+                      {uploadingKind === 'og' ? ' Mengunggah…' : ''}
+                    </p>
+                    {settings.ogImageFile && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void deleteAsset('og')}
+                        disabled={deletingKind === 'og'}
+                      >
+                        <Trash2 className="mr-2 h-3.5 w-3.5" aria-hidden="true" />
+                        {deletingKind === 'og' ? 'Menghapus…' : 'Hapus'}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  Pratinjau tautan
+                </p>
+                <div className="mt-2 overflow-hidden rounded-lg border border-slate-200 bg-white">
+                  {ogPreviewUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={ogPreviewUrl} alt="" className="h-40 w-full object-cover" />
+                  ) : null}
+                  <div className="space-y-1 px-3 py-2">
+                    <p className="truncate text-[11px] uppercase text-slate-500">
+                      {siteHost || 'domain-toko'}
+                    </p>
+                    <p className="line-clamp-2 text-sm font-semibold text-slate-900">
+                      {settings.ogTitle.trim() || settings.seoTitle.trim() || settings.storeName}
+                    </p>
+                    <p className="line-clamp-2 text-xs text-slate-600">
+                      {settings.ogDescription.trim() ||
+                        settings.seoDescription.trim() ||
+                        settings.description ||
+                        settings.tagline}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end border-t border-slate-100 pt-4">
+                <Button
+                  type="button"
+                  onClick={() => void save(['ogTitle', 'ogDescription'])}
+                  disabled={isSaving || isLoading}
+                >
+                  {isSaving ? 'Menyimpan…' : 'Simpan Pratinjau'}
+                </Button>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <CardTitle className="text-base">Webmaster & pengindeksan</CardTitle>
@@ -611,6 +771,24 @@ export default function StoreSettingsPanel({ view }: { view: StoreSettingsView }
           </div>
         </CardHeader>
         <CardContent className="space-y-5">
+          <div className="flex flex-wrap items-start justify-between gap-3 rounded-xl border border-slate-200 p-4">
+            <div className="max-w-md">
+              <h3 className="text-sm font-semibold text-slate-900">Sembunyikan dari mesin pencari</h3>
+              <p className="mt-1 text-xs leading-relaxed text-slate-600">
+                Menambahkan <code>noindex, nofollow</code> ke semua halaman dan menutup
+                <code>/sitemap.xml</code> untuk crawler. Pakai saat toko masih dalam penyiapan.
+              </p>
+            </div>
+            <Switch
+              checked={settings.seoNoIndex}
+              onCheckedChange={(checked) => {
+                setSettings((current) => ({ ...current, seoNoIndex: checked }));
+                void save(['seoNoIndex']);
+              }}
+              disabled={isSaving || isLoading}
+              aria-label="Sembunyikan toko dari mesin pencari"
+            />
+          </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="google-site-verification">Google Search Console verification</Label>

@@ -26,6 +26,14 @@ export async function GET() {
         ? `/api/store-assets/${encodeURIComponent(faviconFile)}`
         : null,
       socialLinks,
+      seoTitle: settings.seoTitle,
+      seoDescription: settings.seoDescription,
+      ogTitle: settings.ogTitle,
+      ogDescription: settings.ogDescription,
+      ogImageUrl: settings.ogImageFile
+        ? `/api/store-assets/${encodeURIComponent(settings.ogImageFile)}`
+        : null,
+      seoNoIndex: settings.seoNoIndex,
     }, {
       headers: { 'Cache-Control': 'public, max-age=60, stale-while-revalidate=300' },
     });

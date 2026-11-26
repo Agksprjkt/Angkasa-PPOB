@@ -17,9 +17,15 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       `/checkout/${encodeURIComponent(category)}/${encodeURIComponent(operator)}`,
     ),
   );
+  const staticPaths = ['/', '/produk', '/promo', '/bantuan', '/kontak', '/legal'];
   return [
-    { url: new URL('/', baseUrl).toString(), changeFrequency: 'daily', priority: 1 },
-    { url: new URL('/kontak', baseUrl).toString(), changeFrequency: 'monthly', priority: 0.4 },
+    ...staticPaths.map((path) => ({
+      url: new URL(path, baseUrl).toString(),
+      changeFrequency: (path === '/' || path === '/promo' ? 'daily' : 'monthly') as
+        | 'daily'
+        | 'monthly',
+      priority: path === '/' ? 1 : 0.6,
+    })),
     ...[...providerPaths].map((path) => ({
       url: new URL(path, baseUrl).toString(),
       changeFrequency: 'daily' as const,

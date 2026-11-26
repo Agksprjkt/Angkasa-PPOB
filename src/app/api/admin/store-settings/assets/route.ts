@@ -13,9 +13,11 @@ export const runtime = 'nodejs';
 // the icon is used by the PWA manifest and apple-touch-icon, and the favicon is
 // the browser tab image.
 const assets = {
-  logo: { column: 'logoFile', label: 'logoUrl' },
-  icon: { column: 'iconFile', label: 'iconUrl' },
-  favicon: { column: 'faviconFile', label: 'faviconUrl' },
+  logo: { column: 'logoFile', label: 'logoUrl', maxBytes: 1_000_000 },
+  icon: { column: 'iconFile', label: 'iconUrl', maxBytes: 1_000_000 },
+  favicon: { column: 'faviconFile', label: 'faviconUrl', maxBytes: 1_000_000 },
+  // A 1200×630 social card rarely fits in 1 MB.
+  og: { column: 'ogImageFile', label: 'ogImageUrl', maxBytes: 2_000_000 },
 } as const;
 
 type AssetKind = keyof typeof assets;
@@ -33,7 +35,7 @@ export async function POST(request: NextRequest) {
   if (!(await requireAdmin(request))) {
     return NextResponse.json({ error: 'FORBIDDEN' }, { status: 403 });
   }
-  if (Number(request.headers.get('content-length') ?? 0) > 2 * 1024 * 1024) {
+  if (Number(request.headers.get('content-length') ?? 0) > 3 * 1024 * 1024) {
     return NextResponse.json({ error: 'REQUEST_TOO_LARGE' }, { status: 413 });
   }
 
@@ -45,7 +47,11 @@ export async function POST(request: NextRequest) {
   }
   const kind = form.get('kind');
   const file = form.get('file');
-  if (!isAssetKind(kind) || !(file instanceof File) || file.size > 1_000_000) {
+  if (
+    !isAssetKind(kind) ||
+    !(file instanceof File) ||
+    file.size > assets[kind].maxBytes
+  ) {
     return NextResponse.json({ error: 'ASSET_REQUIRED_OR_TOO_LARGE' }, { status: 400 });
   }
 
