@@ -1192,11 +1192,32 @@ export default function ProductManagementPanel({
               <CardTitle className="text-base">{details.title}</CardTitle>
               <CardDescription className="mt-1">{details.description}</CardDescription>
             </div>
-            {view !== 'pricing' && (
-              <Button size="sm" onClick={onAdd}>
-                Tambah produk
-              </Button>
-            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <label htmlFor="vendor-filter" className="sr-only">Vendor</label>
+              <select
+                id="vendor-filter"
+                aria-label="Filter vendor"
+                className="h-9 rounded-md border border-slate-200 bg-white px-3 text-sm"
+                value={vendor}
+                onChange={(event) => {
+                  setVendor(event.target.value as 'all' | Product['vendor']);
+                  // A category that exists only under the previous vendor would
+                  // otherwise leave the list empty with no way back.
+                  setCategory('all');
+                  setGroupPage(0);
+                }}
+              >
+                <option value="all">Semua vendor</option>
+                <option value="Digiflazz">Digiflazz</option>
+                <option value="TokoVoucher">TokoVoucher</option>
+                <option value="Manual">Manual</option>
+              </select>
+              {view !== 'pricing' && (
+                <Button size="sm" onClick={onAdd}>
+                  Tambah produk
+                </Button>
+              )}
+            </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -1231,7 +1252,7 @@ export default function ProductManagementPanel({
             </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-[minmax(12rem,1fr)_12rem_auto]">
+          <div className="grid gap-3 sm:grid-cols-[minmax(12rem,1fr)_auto]">
             <div className="relative">
               <Search
                 aria-hidden="true"
@@ -1245,23 +1266,6 @@ export default function ProductManagementPanel({
                 onChange={(event) => setQuery(event.target.value)}
               />
             </div>
-            <select
-              aria-label="Filter vendor"
-              className="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm"
-              value={vendor}
-              onChange={(event) => {
-                setVendor(event.target.value as 'all' | Product['vendor']);
-                // A category that exists only under the previous vendor would
-                // otherwise leave the list empty with no way back.
-                setCategory('all');
-                setGroupPage(0);
-              }}
-            >
-              <option value="all">Semua vendor</option>
-              <option value="Digiflazz">Digiflazz</option>
-              <option value="TokoVoucher">TokoVoucher</option>
-              <option value="Manual">Manual</option>
-            </select>
             <div className="flex gap-2">
               <select
                 aria-label="Urutkan produk"

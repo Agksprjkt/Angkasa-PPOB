@@ -8,6 +8,7 @@ import {
   isDigiflazzProductSyncDue,
 } from '@/lib/digiflazz-product-sync-schedule';
 import { fetchTokoVoucherProducts } from '@/lib/tokovoucher';
+import { tokoVoucherCategory } from '@/lib/tokovoucher-category';
 import { resolveVariant } from '@/lib/product-variant';
 import { getDatabase } from '@/lib/server/db/client';
 import {
@@ -21,29 +22,12 @@ import {
   type DigiflazzAutoSyncResult,
 } from '@/lib/server/integration-settings';
 import { acquireRedisLease } from '@/lib/server/redis';
-import type { ProductCategory } from '@/types/ppob';
 
 const syncLockKey = 'ppob:lock:tokovoucher-product-sync';
 const syncLockTtlMs = 10 * 60 * 1000;
 let localSyncRunning = false;
 
-// Their category names are free text ("Voucher Game", "Pulsa Reguler"), so the
-// mapping reuses the same keyword approach as the Digiflazz sync.
-function getCategory(...values: string[]): ProductCategory | null {
-  for (const value of values) {
-    const category = value.toLocaleLowerCase('id-ID').replace(/[^a-z]/g, '');
-    if (!category) continue;
-    if (category.includes('pulsa')) return 'pulsa';
-    if (category.includes('data') || category.includes('internet')) return 'data';
-    if (category.includes('voucher') || category.includes('game')) return 'voucher';
-    if (category.includes('pln') || category.includes('listrik')) return 'pln';
-    if (category.includes('tagihan') || category.includes('pascabayar')) return 'tagihan';
-    if (category.includes('ewallet') || category.includes('emoney') || category.includes('uangelektronik')) {
-      return 'ewallet';
-    }
-  }
-  return null;
-}
+const getCategory = tokoVoucherCategory;
 
 export async function syncTokoVoucherProducts(): Promise<DigiflazzAutoSyncResult> {
   const config = await getTokoVoucherConfig();
