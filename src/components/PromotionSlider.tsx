@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowUpRight } from 'lucide-react';
+import { ArrowUpRight, Pause, Play } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { CrystalLoader } from '@/components/ui/crystal-loader';
 import type { PromotionalBanner } from '@/types/ppob';
@@ -41,6 +41,9 @@ export default function PromotionSlider() {
   const [loadError, setLoadError] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isPaused, setIsPaused] = useState(false);
+  // Hovering and focusing pause the carousel temporarily; the toggle is a
+  // deliberate choice and must survive the pointer leaving.
+  const [isPausedByUser, setIsPausedByUser] = useState(false);
   const [reducedMotion, setReducedMotion] = useState(false);
   const slides = banners.length ? banners : [fallbackBanner];
   const activeSlide = slides[activeIndex] ?? slides[0];
@@ -88,12 +91,12 @@ export default function PromotionSlider() {
   }, []);
 
   useEffect(() => {
-    if (slides.length < 2 || isPaused || reducedMotion) return;
+    if (slides.length < 2 || isPaused || isPausedByUser || reducedMotion) return;
     const timer = window.setTimeout(() => {
       setActiveIndex((index) => (index + 1) % slides.length);
     }, autoplayMs);
     return () => window.clearTimeout(timer);
-  }, [activeIndex, isPaused, reducedMotion, slides.length]);
+  }, [activeIndex, isPaused, isPausedByUser, reducedMotion, slides.length]);
 
   const moveSlide = useCallback((direction: -1 | 1) => {
     setActiveIndex((index) => (index + direction + slides.length) % slides.length);
@@ -212,8 +215,10 @@ export default function PromotionSlider() {
           </button>
 
           {slides.length > 1 && (
-            <div className="absolute inset-x-0 bottom-3 z-20 flex items-center justify-center sm:bottom-4">
-              <div className={`flex items-center gap-1.5 rounded-full px-2.5 py-1.5 ${
+            <div className="absolute inset-x-0 bottom-3 z-20 flex items-center justify-center gap-1 sm:bottom-4">
+              {/* The dots stay small visually but the button itself is 24px tall,
+                  otherwise a 6px pill is impossible to hit on a phone. */}
+              <div className={`flex items-center gap-1 rounded-full px-1.5 ${
                 hasImage ? 'bg-slate-900/35 backdrop-blur-sm' : 'bg-white/70'
               }`}>
                 {slides.map((slide, index) => (
@@ -223,14 +228,32 @@ export default function PromotionSlider() {
                     onClick={() => setActiveIndex(index)}
                     aria-label={`Tampilkan promosi ${index + 1}`}
                     aria-current={index === activeIndex ? 'true' : undefined}
-                    className={`h-1.5 rounded-full transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${
-                      index === activeIndex
-                        ? `w-6 ${hasImage ? 'bg-white' : 'bg-blue-700'}`
-                        : `w-1.5 ${hasImage ? 'bg-white/60 hover:bg-white/85' : 'bg-slate-400/70 hover:bg-slate-500/80'}`
-                    }`}
-                  />
+                    className="flex h-6 min-w-6 items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={`block h-1.5 rounded-full transition-all ${
+                        index === activeIndex
+                          ? `w-6 ${hasImage ? 'bg-white' : 'bg-blue-700'}`
+                          : `w-1.5 ${hasImage ? 'bg-white/60' : 'bg-slate-400/70'}`
+                      }`}
+                    />
+                  </button>
                 ))}
               </div>
+              <button
+                type="button"
+                onClick={() => setIsPausedByUser((paused) => !paused)}
+                aria-label={isPausedByUser ? 'Lanjutkan promosi otomatis' : 'Jeda promosi otomatis'}
+                aria-pressed={isPausedByUser}
+                className={`flex h-6 w-6 items-center justify-center rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${
+                  hasImage ? 'bg-slate-900/35 text-white backdrop-blur-sm' : 'bg-white/70 text-slate-700'
+                }`}
+              >
+                {isPausedByUser
+                  ? <Play className="h-3 w-3" aria-hidden="true" />
+                  : <Pause className="h-3 w-3" aria-hidden="true" />}
+              </button>
             </div>
           )}
         </div>

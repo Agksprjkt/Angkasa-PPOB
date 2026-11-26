@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkDigiflazzBalance } from '@/lib/digiflazz';
+import { checkTokoVoucherBalance } from '@/lib/tokovoucher';
 import { getAuth } from '@/lib/server/auth';
-import { getDigiflazzConfig } from '@/lib/server/integration-settings';
+import { getDigiflazzConfig, getTokoVoucherConfig } from '@/lib/server/integration-settings';
 
 export const runtime = 'nodejs';
 
@@ -44,6 +45,7 @@ export async function GET(request: NextRequest) {
 
   try {
     const config = await getDigiflazzConfig();
+    const tokoVoucherConfig = await getTokoVoucherConfig();
     const providers: ProviderBalance[] = [];
     if (config.username && config.apiKey) {
       try {
@@ -77,6 +79,35 @@ export async function GET(request: NextRequest) {
           status: 'unavailable',
           error: 'Saldo belum dapat diambil. Periksa koneksi dan kredensial H2H.',
           checkedAt,
+        });
+      }
+    }
+
+    if (tokoVoucherConfig.memberCode && tokoVoucherConfig.secret) {
+      try {
+        const { balance } = await checkTokoVoucherBalance(tokoVoucherConfig);
+        providers.push({
+          id: 'tokovoucher',
+          name: 'TokoVoucher',
+          mode: tokoVoucherConfig.mode === 'production' ? 'Produksi' : 'Sandbox',
+          balance,
+          status: 'available',
+          checkedAt: new Date().toISOString(),
+          fetchedAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        console.error(
+          '[ADMIN_TOKOVOUCHER_BALANCE_FAILED]',
+          error instanceof Error ? error.message : 'Unknown provider error',
+        );
+        providers.push({
+          id: 'tokovoucher',
+          name: 'TokoVoucher',
+          mode: tokoVoucherConfig.mode === 'production' ? 'Produksi' : 'Sandbox',
+          balance: null,
+          status: 'unavailable',
+          error: 'Saldo belum dapat diambil. Periksa koneksi dan kredensial TokoVoucher.',
+          checkedAt: new Date().toISOString(),
         });
       }
     }

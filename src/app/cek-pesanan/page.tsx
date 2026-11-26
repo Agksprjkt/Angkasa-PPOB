@@ -14,7 +14,6 @@ import {
   CardContent,
   CardDescription,
   CardHeader,
-  CardTitle,
 } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { LoadingOverlay } from '@/components/ui/crystal-loader';
@@ -158,7 +157,7 @@ export default function CheckOrderPage() {
                 <ClipboardCheck className="h-5 w-5" aria-hidden="true" />
               </span>
               <div className="min-w-0 space-y-1">
-                <CardTitle className="text-lg">Cek Pesanan</CardTitle>
+                <h1 className="text-lg font-semibold leading-none tracking-tight">Cek Pesanan</h1>
                 <CardDescription className="leading-5">
                   Masukkan nomor WhatsApp atau kode pesanan untuk melihat status pesanan.
                 </CardDescription>

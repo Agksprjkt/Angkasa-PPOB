@@ -61,10 +61,15 @@ function formatCurrency(value: number) {
   return `Rp ${value.toLocaleString('id-ID')}`;
 }
 
-export default function AdminTransactionsPanel() {
+export default function AdminTransactionsPanel({
+  initialStatus = 'all',
+}: {
+  // Lets the overview KPI cards open this panel already filtered.
+  initialStatus?: 'all' | 'pending' | 'success' | 'failed' | 'review';
+}) {
   const { addToast } = usePPOB();
   const [query, setQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState(initialStatus);
   const [page, setPage] = useState(1);
   const [refreshKey, setRefreshKey] = useState(0);
   const [data, setData] = useState<TransactionPage | null>(null);
@@ -244,7 +249,7 @@ export default function AdminTransactionsPanel() {
         <select
           value={statusFilter}
           onChange={(event) => {
-            setStatusFilter(event.target.value);
+            setStatusFilter(event.target.value as typeof statusFilter);
             setPage(1);
             setIsLoading(true);
             setErrorMessage('');
@@ -267,37 +272,40 @@ export default function AdminTransactionsPanel() {
       )}
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[980px] text-left text-sm">
-            <thead className="bg-slate-50 text-xs font-medium text-slate-500">
-              <tr>
-                <th className="px-4 py-3">Transaksi</th>
-                <th className="px-4 py-3">User</th>
-                <th className="px-4 py-3">Produk & tujuan</th>
-                <th className="px-4 py-3 text-right">Nominal</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Waktu</th>
-                <th className="px-4 py-3 text-right">Aksi</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {isLoading && !data ? (
+        {/* The table is wider than a phone. The first column stays put and a fade
+            on the right edge shows there is more, otherwise "Aksi" is invisible. */}
+        <div className="relative">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[980px] text-left text-sm">
+              <thead className="bg-slate-50 text-xs font-medium text-slate-500">
                 <tr>
-                  <td colSpan={7} className="px-4 py-12 text-center text-slate-500">
-                    <LoadingState message="Memuat riwayat transaksi..." />
-                  </td>
+                  <th className="sticky left-0 z-10 bg-slate-50 px-4 py-3">Transaksi</th>
+                  <th className="px-4 py-3">User</th>
+                  <th className="px-4 py-3">Produk & tujuan</th>
+                  <th className="px-4 py-3 text-right">Nominal</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Waktu</th>
+                  <th className="px-4 py-3 text-right">Aksi</th>
                 </tr>
-              ) : data?.transactions.length ? data.transactions.map((transaction) => (
-                <tr key={transaction.id} className="align-top hover:bg-slate-50/70">
-                  <td className="px-4 py-3">
-                    <div className="font-mono text-xs font-semibold text-slate-900">
-                      {transaction.referenceId}
-                    </div>
-                    <div className="mt-1 text-xs text-slate-500">
-                      {transaction.paymentMethod.replaceAll('_', ' ')}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {isLoading && !data ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-12 text-center text-slate-500">
+                      <LoadingState message="Memuat riwayat transaksi..." />
+                    </td>
+                  </tr>
+                ) : data?.transactions.length ? data.transactions.map((transaction) => (
+                  <tr key={transaction.id} className="align-top hover:bg-slate-50/70">
+                    <td className="sticky left-0 z-10 bg-white px-4 py-3">
+                      <div className="font-mono text-xs font-semibold text-slate-900">
+                        {transaction.referenceId}
+                      </div>
+                      <div className="mt-1 text-xs text-slate-500">
+                        {transaction.paymentMethod.replaceAll('_', ' ')}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
                     <div className="font-medium text-slate-800">
                       {transaction.userName ?? 'Tanpa akun'}
                     </div>
@@ -431,6 +439,11 @@ export default function AdminTransactionsPanel() {
               )}
             </tbody>
           </table>
+          </div>
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-white to-transparent sm:hidden"
+          />
         </div>
 
         <div className="flex flex-col gap-3 border-t border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">

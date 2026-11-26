@@ -312,6 +312,18 @@ export default function AdminPanel() {
   const [providerBalancesError, setProviderBalancesError] = useState('');
   const [isLoadingProviderBalances, setIsLoadingProviderBalances] = useState(true);
   const [summaryActivityTab, setSummaryActivityTab] = useState<'transactions' | 'mutations'>('transactions');
+  // Set when an overview card opens the transaction list already filtered, so
+  // the admin lands on the rows they just clicked on.
+  const [transactionsInitialStatus, setTransactionsInitialStatus] = useState<
+    'all' | 'pending' | 'success' | 'failed' | 'review'
+  >('all');
+
+  const openTransactions = (
+    status: 'all' | 'pending' | 'success' | 'failed' | 'review',
+  ) => {
+    setTransactionsInitialStatus(status);
+    setActiveAdminTab('transactions');
+  };
   const [recentTransactions, setRecentTransactions] = useState<DashboardTransaction[]>([]);
   const [recentMutations, setRecentMutations] = useState<DashboardMutation[]>([]);
   const [activityError, setActivityError] = useState('');
@@ -1254,35 +1266,42 @@ export default function AdminPanel() {
             </CardContent>
           </Card>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            <Card>
-              <CardHeader className="pb-2">
-                <CardDescription className="text-xs flex justify-between items-center">
-                  <span>Omzet berhasil</span>
-                  <DollarSign className="w-4 h-4 text-blue-600" />
-                </CardDescription>
-                <CardTitle className="text-2xl font-bold font-sans">
-                  Rp {displayedMetrics.totalRevenue.toLocaleString('id-ID')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-[11px] text-emerald-600 font-medium">
-                  {displayedMetrics.successfulCount} dari {displayedMetrics.totalTransactions} transaksi
-                </p>
-                {formatPeriodChange(displayedMetrics.totalRevenue, comparisonMetrics?.totalRevenue) && (
-                  <p className="mt-1 text-[11px] font-medium text-slate-500">
-                    {formatPeriodChange(displayedMetrics.totalRevenue, comparisonMetrics?.totalRevenue)}
+            <button
+              type="button"
+              onClick={() => openTransactions('success')}
+              className="text-left transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 rounded-xl"
+              aria-label="Lihat transaksi berhasil"
+            >
+              <Card className="h-full">
+                <CardHeader className="pb-2">
+                  <CardDescription className="text-xs flex justify-between items-center">
+                    <span>Omzet berhasil</span>
+                    <DollarSign className="w-4 h-4 text-blue-600" />
+                  </CardDescription>
+                  <CardTitle className="text-2xl font-bold font-sans">
+                    Rp {displayedMetrics.totalRevenue.toLocaleString('id-ID')}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-[11px] text-emerald-600 font-medium">
+                    {displayedMetrics.successfulCount} dari {displayedMetrics.totalTransactions} transaksi
                   </p>
-                )}
-                {formatPeriodChange(displayedMetrics.totalTransactions, comparisonMetrics?.totalTransactions) && (
-                  <p className="mt-1 text-[11px] text-slate-500">
-                    Transaksi: {formatPeriodChange(
-                      displayedMetrics.totalTransactions,
-                      comparisonMetrics?.totalTransactions,
-                    )}
-                  </p>
-                )}
-              </CardContent>
-            </Card>
+                  {formatPeriodChange(displayedMetrics.totalRevenue, comparisonMetrics?.totalRevenue) && (
+                    <p className="mt-1 text-[11px] font-medium text-slate-500">
+                      {formatPeriodChange(displayedMetrics.totalRevenue, comparisonMetrics?.totalRevenue)}
+                    </p>
+                  )}
+                  {formatPeriodChange(displayedMetrics.totalTransactions, comparisonMetrics?.totalTransactions) && (
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      Transaksi: {formatPeriodChange(
+                        displayedMetrics.totalTransactions,
+                        comparisonMetrics?.totalTransactions,
+                      )}
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            </button>
 
             <Card>
               <CardHeader className="pb-2">
@@ -1306,51 +1325,71 @@ export default function AdminPanel() {
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader className="pb-2">
-                <CardDescription className="text-xs flex justify-between items-center">
-                  <span>Antrean Deposit Pending</span>
-                  <Clock className="w-4 h-4 text-amber-600" />
-                </CardDescription>
-                <CardTitle className="text-2xl font-bold text-amber-600 font-sans">
-                  {displayedMetrics.pendingDepositsCount} Pengajuan
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-[11px] text-slate-500">
-                  Total Rp {displayedMetrics.pendingDepositsAmount.toLocaleString('id-ID')}
-                </p>
-              </CardContent>
-            </Card>
+            <button
+              type="button"
+              onClick={() => setActiveAdminTab('deposits')}
+              className="text-left transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-600 focus-visible:ring-offset-2 rounded-xl"
+              aria-label="Buka antrean verifikasi deposit"
+            >
+              <Card className="h-full">
+                <CardHeader className="pb-2">
+                  <CardDescription className="text-xs flex justify-between items-center">
+                    <span>Antrean Deposit Pending</span>
+                    <Clock className="w-4 h-4 text-amber-600" />
+                  </CardDescription>
+                  <CardTitle className="text-2xl font-bold text-amber-600 font-sans">
+                    {displayedMetrics.pendingDepositsCount} Pengajuan
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-[11px] text-slate-500">
+                    Total Rp {displayedMetrics.pendingDepositsAmount.toLocaleString('id-ID')}
+                  </p>
+                </CardContent>
+              </Card>
+            </button>
 
-            <Card>
-              <CardHeader className="pb-2">
-                <CardDescription className="text-xs flex justify-between items-center">
-                  <span>Pengguna terdaftar</span>
-                  <Users className="w-4 h-4 text-blue-600" />
-                </CardDescription>
-                <CardTitle className="text-2xl font-bold text-slate-900 font-sans">
-                  {displayedMetrics.userCount.toLocaleString('id-ID')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-[11px] text-slate-500 font-medium">
-                  {displayedMetrics.activeProductCount.toLocaleString('id-ID')} produk aktif
-                </p>
-              </CardContent>
-            </Card>
+            <button
+              type="button"
+              onClick={() => setActiveAdminTab('users')}
+              className="text-left transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 rounded-xl"
+              aria-label="Buka manajemen pengguna"
+            >
+              <Card className="h-full">
+                <CardHeader className="pb-2">
+                  <CardDescription className="text-xs flex justify-between items-center">
+                    <span>Pengguna terdaftar</span>
+                    <Users className="w-4 h-4 text-blue-600" />
+                  </CardDescription>
+                  <CardTitle className="text-2xl font-bold text-slate-900 font-sans">
+                    {displayedMetrics.userCount.toLocaleString('id-ID')}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-[11px] text-slate-500 font-medium">
+                    {displayedMetrics.activeProductCount.toLocaleString('id-ID')} produk aktif
+                  </p>
+                </CardContent>
+              </Card>
+            </button>
 
-            <Card>
-              <CardHeader className="pb-2">
-                <CardDescription className="text-xs flex justify-between items-center">
-                  <span>Transaksi menunggu</span>
-                  <Clock className={`w-4 h-4 ${
-                    (displayedMetrics.overduePendingCount ?? 0) > 0
-                      ? 'text-rose-600'
-                      : 'text-amber-600'
-                  }`} />
-                </CardDescription>
-                <CardTitle className="text-2xl font-bold font-sans">
+            <button
+              type="button"
+              onClick={() => openTransactions('pending')}
+              className="text-left transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-600 focus-visible:ring-offset-2 rounded-xl"
+              aria-label="Lihat transaksi menunggu"
+            >
+              <Card className="h-full">
+                <CardHeader className="pb-2">
+                  <CardDescription className="text-xs flex justify-between items-center">
+                    <span>Transaksi menunggu</span>
+                    <Clock className={`w-4 h-4 ${
+                      (displayedMetrics.overduePendingCount ?? 0) > 0
+                        ? 'text-rose-600'
+                        : 'text-amber-600'
+                    }`} />
+                  </CardDescription>
+                  <CardTitle className="text-2xl font-bold font-sans">
                   {(displayedMetrics.pendingCount ?? 0).toLocaleString('id-ID')}
                 </CardTitle>
               </CardHeader>
@@ -1373,24 +1412,32 @@ export default function AdminPanel() {
                   </p>
                 )}
               </CardContent>
-            </Card>
+              </Card>
+            </button>
 
-            <Card>
-              <CardHeader className="pb-2">
-                <CardDescription className="text-xs flex justify-between items-center">
-                  <span>Transaksi gagal</span>
-                  <CircleAlert className="w-4 h-4 text-rose-600" />
-                </CardDescription>
-                <CardTitle className="text-2xl font-bold font-sans text-rose-700">
-                  {(displayedMetrics.failedCount ?? 0).toLocaleString('id-ID')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-[11px] text-slate-500">
-                  Dalam {metricsPeriodLabels[metricsPeriod]}
-                </p>
-              </CardContent>
-            </Card>
+            <button
+              type="button"
+              onClick={() => openTransactions('failed')}
+              className="text-left transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-600 focus-visible:ring-offset-2 rounded-xl"
+              aria-label="Lihat transaksi gagal"
+            >
+              <Card className="h-full">
+                <CardHeader className="pb-2">
+                  <CardDescription className="text-xs flex justify-between items-center">
+                    <span>Transaksi gagal</span>
+                    <CircleAlert className="w-4 h-4 text-rose-600" />
+                  </CardDescription>
+                  <CardTitle className="text-2xl font-bold font-sans text-rose-700">
+                    {(displayedMetrics.failedCount ?? 0).toLocaleString('id-ID')}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-[11px] text-slate-500">
+                    Dalam {metricsPeriodLabels[metricsPeriod]}
+                  </p>
+                </CardContent>
+              </Card>
+            </button>
           </div>
           <Card>
             <CardHeader>
@@ -1907,7 +1954,7 @@ export default function AdminPanel() {
       )}
 
       {activeAdminTab === 'transactions' && (
-        <AdminTransactionsPanel />
+        <AdminTransactionsPanel initialStatus={transactionsInitialStatus} />
       )}
 
       {activeAdminTab === 'promotions' && (
