@@ -1,0 +1,1 @@
+ALTER TABLE "product_provider_settings" ADD COLUMN "aliasOf" text;

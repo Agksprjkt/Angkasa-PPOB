@@ -63,6 +63,7 @@ export async function GET(request: NextRequest) {
       pricingValue: 0,
       memberPricingType: 'fixed',
       memberPricingValue: 0,
+      aliasOf: null,
     },
   });
 }
@@ -90,6 +91,17 @@ export async function PUT(request: NextRequest) {
   const memberPricingType = body.memberPricingType ?? pricingType;
   const memberPricingValue = body.memberPricingValue ?? pricingValue;
   const applyPrices = body.applyPrices === true;
+  // Empty or missing alias means "stand alone"; anything else points at another
+  // operator in the same category so both vendors share one storefront card.
+  const rawAlias = body.aliasOf;
+  const aliasOf = typeof rawAlias === 'string' && rawAlias.trim()
+    ? rawAlias.trim().slice(0, 200)
+    : null;
+  if (
+    rawAlias !== undefined && rawAlias !== null && typeof rawAlias !== 'string'
+  ) {
+    return NextResponse.json({ error: 'INVALID_PROVIDER_SETTINGS' }, { status: 400 });
+  }
   if (
     typeof description !== 'string' || description.length > 2000 ||
     (iconUrl !== null && typeof iconUrl !== 'string') ||
@@ -127,6 +139,7 @@ export async function PUT(request: NextRequest) {
           pricingValue: Number(pricingValue),
           memberPricingType,
           memberPricingValue: Number(memberPricingValue),
+          aliasOf,
         })
         .onConflictDoUpdate({
           target: [productProviderSettings.category, productProviderSettings.operator],
@@ -138,6 +151,7 @@ export async function PUT(request: NextRequest) {
             pricingValue: Number(pricingValue),
             memberPricingType,
             memberPricingValue: Number(memberPricingValue),
+            aliasOf,
             updatedAt: new Date(),
           },
         });

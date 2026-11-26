@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Product, ProductCategory } from '@/types/ppob';
 import { vendorLabelOf } from '@/lib/vendor-registry';
+import { providerGroupKey, resolveProviderName } from '@/lib/provider-alias';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -15,7 +16,9 @@ import { Input } from '@/components/ui/input';
 import { usePPOB } from '@/context/PPOBContext';
 import {
   CircleDollarSign,
+  ArrowDown,
   ArrowLeft,
+  ArrowUp,
   Gamepad2,
   ReceiptText,
   Pencil,
@@ -70,8 +73,10 @@ interface ProviderGroup {
   key: string;
   category: ProductCategory;
   operator: string;
+  vendors: Product['vendor'][];
   products: Product[];
   allProducts: Product[];
+  activeCount: number;
 }
 
 interface ProviderSettings {
@@ -82,6 +87,7 @@ interface ProviderSettings {
   pricingValue: number;
   memberPricingType: 'fixed' | 'percent';
   memberPricingValue: number;
+  aliasOf: string | null;
 }
 
 function ProviderDetailPanel({
@@ -95,7 +101,7 @@ function ProviderDetailPanel({
   onBack: () => void;
   onToggleStatus: (product: Product, status: Product['status']) => Promise<boolean>;
 }) {
-  const { refreshProducts, addToast, updateProduct, bulkUpdateProductStatus } = usePPOB();
+  const { refreshProducts, addToast, updateProduct, bulkUpdateProductStatus, products: catalogProducts } = usePPOB();
   const [settings, setSettings] = useState<ProviderSettings>({
     description: '',
     iconUrl: null,
@@ -104,6 +110,7 @@ function ProviderDetailPanel({
     pricingValue: 0,
     memberPricingType: 'fixed',
     memberPricingValue: 0,
+    aliasOf: null,
   });
   const [query, setQuery] = useState('');
   const [productPage, setProductPage] = useState(0);
@@ -158,6 +165,20 @@ function ProviderDetailPanel({
   const allActive = group.allProducts.every((product) => product.status === 'active');
   const activeCount = group.allProducts.filter((product) => product.status === 'active').length;
   const totalCount = group.allProducts.length;
+
+  // Operators in the same category are the only valid merge targets, and the
+  // list is small because it is deduplicated by name.
+  const aliasOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const product of catalogProducts) {
+      if (product.category !== group.category) continue;
+      const name = product.operator.trim();
+      if (name && name.toLocaleLowerCase('id-ID') !== group.operator.toLocaleLowerCase('id-ID')) {
+        names.add(name);
+      }
+    }
+    return [...names].sort((a, b) => a.localeCompare(b, 'id'));
+  }, [catalogProducts, group.category, group.operator]);
 
   // A TokoVoucher provider can hold 600+ rows; rendering them all made the
   // panel crawl, so the table pages through them.
@@ -418,6 +439,33 @@ function ProviderDetailPanel({
               onChange={(event) => setSettings((current) => ({ ...current, description: event.target.value }))}
               className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
             />
+          </div>
+          <div className="space-y-1.5">
+            <label htmlFor="provider-alias" className="text-sm font-medium text-slate-700">
+              Gabung ke operator
+            </label>
+            <input
+              id="provider-alias"
+              list="provider-alias-options"
+              maxLength={200}
+              value={settings.aliasOf ?? ''}
+              onChange={(event) => setSettings((current) => ({
+                ...current,
+                aliasOf: event.target.value,
+              }))}
+              placeholder="Kosongkan bila tampil terpisah"
+              className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 sm:max-w-sm"
+            />
+            <datalist id="provider-alias-options">
+              {aliasOptions.map((name) => (
+                <option key={name} value={name} />
+              ))}
+            </datalist>
+            <p className="text-xs text-slate-500">
+              Isi nama operator lain di kategori ini bila kedua vendor menjual layanan yang sama,
+              misalnya DATA AXIS digabung ke AXIS. Kartu toko dan halaman checkout akan memakai satu
+              nama dengan produk dari kedua vendor.
+            </p>
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
@@ -889,6 +937,8 @@ export default function ProductManagementPanel({
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<ProductCategory | 'all'>('all');
   const [vendor, setVendor] = useState<'all' | Product['vendor']>('all');
+  const [sortBy, setSortBy] = useState<'name' | 'price'>('name');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [groupPage, setGroupPage] = useState(0);
   const [pricingPage, setPricingPage] = useState(0);
   const [pendingProductIds, setPendingProductIds] = useState<Set<string>>(
@@ -936,7 +986,7 @@ export default function ProductManagementPanel({
 
   const visibleProducts = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase('id-ID');
-    return vendorProducts.filter((product) => {
+    const filtered = vendorProducts.filter((product) => {
       if (category !== 'all' && product.category !== category) return false;
       if (!normalizedQuery) return true;
       return [
@@ -947,50 +997,70 @@ export default function ProductManagementPanel({
         product.category,
       ].some((value) => value.toLocaleLowerCase('id-ID').includes(normalizedQuery));
     });
-  }, [category, query, vendorProducts]);
+    const direction = sortDirection === 'desc' ? -1 : 1;
+    return [...filtered].sort((a, b) => {
+      if (sortBy === 'price') {
+        const diff = a.sellPriceUser - b.sellPriceUser;
+        if (diff !== 0) return diff * direction;
+        return a.name.localeCompare(b.name, 'id');
+      }
+      return a.name.localeCompare(b.name, 'id') * direction;
+    });
+  }, [category, query, sortBy, sortDirection, vendorProducts]);
 
   // One pass over the visible products; the provider's full member list is
   // grouped from the same map instead of re-filtering 10k rows per group.
+  // providerAlias lets two vendors selling the same brand share one row.
   const { providerGroups, groupTotal } = useMemo(() => {
     const membersByKey = new Map<string, Product[]>();
     for (const product of vendorProducts) {
-      const key = `${product.category}:${product.operator.toLocaleLowerCase('id-ID')}`;
+      const key = providerGroupKey(product.category, product.operator, product.providerAlias);
       const members = membersByKey.get(key);
       if (members) members.push(product);
       else membersByKey.set(key, [product]);
     }
 
-    const groups = new Map<string, {
-      key: string;
-      category: ProductCategory;
-      operator: string;
-      products: Product[];
-      allProducts: Product[];
-      activeCount: number;
-    }>();
+    const groups = new Map<string, ProviderGroup>();
     for (const product of visibleProducts) {
-      const key = `${product.category}:${product.operator.toLocaleLowerCase('id-ID')}`;
+      const key = providerGroupKey(product.category, product.operator, product.providerAlias);
       const existing = groups.get(key);
       if (existing) {
         existing.products.push(product);
+        if (!existing.vendors.includes(product.vendor)) existing.vendors.push(product.vendor);
         continue;
       }
       const allProducts = membersByKey.get(key) ?? [product];
       groups.set(key, {
         key,
         category: product.category,
-        operator: product.operator,
+        operator: resolveProviderName(product.operator, product.providerAlias),
+        vendors: [product.vendor],
         products: [product],
         allProducts,
         activeCount: allProducts.filter((item) => item.status === 'active').length,
       });
     }
-    const sorted = [...groups.values()].sort((a, b) =>
-      categoryOrder.indexOf(a.category) - categoryOrder.indexOf(b.category) ||
-      a.operator.localeCompare(b.operator, 'id'),
-    );
+
+    const priceOf = (group: ProviderGroup) => {
+      let cheapest = Number.POSITIVE_INFINITY;
+      for (const product of group.allProducts) {
+        if (product.sellPriceUser < cheapest) cheapest = product.sellPriceUser;
+      }
+      return Number.isFinite(cheapest) ? cheapest : 0;
+    };
+    const sorted = [...groups.values()].sort((a, b) => {
+      const byCategory = categoryOrder.indexOf(a.category) - categoryOrder.indexOf(b.category);
+      if (byCategory !== 0) return byCategory;
+      const direction = sortDirection === 'desc' ? -1 : 1;
+      if (sortBy === 'price') {
+        const diff = priceOf(a) - priceOf(b);
+        if (diff !== 0) return diff * direction;
+        return a.operator.localeCompare(b.operator, 'id');
+      }
+      return a.operator.localeCompare(b.operator, 'id') * direction;
+    });
     return { providerGroups: sorted, groupTotal: sorted.length };
-  }, [vendorProducts, visibleProducts]);
+  }, [sortBy, sortDirection, vendorProducts, visibleProducts]);
 
   const groupsPerPage = 25;
   const groupPageCount = Math.max(1, Math.ceil(groupTotal / groupsPerPage));
@@ -1125,7 +1195,7 @@ export default function ProductManagementPanel({
             </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-[minmax(12rem,1fr)_12rem]">
+          <div className="grid gap-3 sm:grid-cols-[minmax(12rem,1fr)_12rem_auto]">
             <div className="relative">
               <Search
                 aria-hidden="true"
@@ -1156,6 +1226,34 @@ export default function ProductManagementPanel({
               <option value="TokoVoucher">TokoVoucher</option>
               <option value="Manual">Manual</option>
             </select>
+            <div className="flex gap-2">
+              <select
+                aria-label="Urutkan produk"
+                className="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm"
+                value={sortBy}
+                onChange={(event) => {
+                  setSortBy(event.target.value as 'name' | 'price');
+                  setGroupPage(0);
+                  setPricingPage(0);
+                }}
+              >
+                <option value="name">Urutkan: Nama</option>
+                <option value="price">Urutkan: Harga</option>
+              </select>
+              <Button
+                type="button"
+                variant="outline"
+                aria-label={sortDirection === 'asc' ? 'Urutan menaik' : 'Urutan menurun'}
+                title={sortDirection === 'asc' ? 'Naik' : 'Turun'}
+                onClick={() => {
+                  setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+                  setGroupPage(0);
+                  setPricingPage(0);
+                }}
+              >
+                {sortDirection === 'asc' ? <ArrowUp className="h-4 w-4" /> : <ArrowDown className="h-4 w-4" />}
+              </Button>
+            </div>
           </div>
 
           <div className="flex items-center justify-between text-xs text-slate-500">
@@ -1311,6 +1409,7 @@ export default function ProductManagementPanel({
                               {activeCount > 0 && activeCount < group.allProducts.length
                                 ? ` · ${activeCount} aktif`
                                 : ''}
+                              {group.vendors.length > 1 ? ` · ${group.vendors.join(' · ')}` : ''}
                             </p>
                           </div>
                         </div>

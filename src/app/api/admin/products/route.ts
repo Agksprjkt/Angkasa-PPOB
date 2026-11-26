@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { asc, eq, inArray, notInArray } from 'drizzle-orm';
+import { asc, desc, eq, inArray, notInArray } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import type { Product, ProductCategory } from '@/types/ppob';
 import { isAdministrator } from '@/lib/server/authorization';
 import { getDatabase } from '@/lib/server/db/client';
-import { products } from '@/lib/server/db/schema';
+import { productProviderSettings, products } from '@/lib/server/db/schema';
 import { getVendorRuntimeConfig } from '@/lib/server/integration-settings';
 import { parseBulkStatusInput } from '@/lib/product-bulk-update';
 
@@ -88,12 +88,41 @@ export async function GET(request: NextRequest) {
       ...(digiflazzShowProducts ? [] : (['Digiflazz'] as const)),
       ...(tokovoucherShowProducts ? [] : (['TokoVoucher'] as const)),
     ];
-    const rows = await getDatabase()
-      .select()
-      .from(products)
-      .where(hiddenVendors.length ? notInArray(products.vendor, [...hiddenVendors]) : undefined)
-      .orderBy(asc(products.name));
-    return NextResponse.json({ products: rows });
+    const sort = request.nextUrl.searchParams.get('sort');
+    const direction = request.nextUrl.searchParams.get('dir') === 'desc' ? 'desc' : 'asc';
+    const sortColumn = sort === 'price' ? products.sellPriceUser : products.name;
+    const db = getDatabase();
+    const [rows, providers] = await Promise.all([
+      db
+        .select()
+        .from(products)
+        .where(hiddenVendors.length ? notInArray(products.vendor, [...hiddenVendors]) : undefined)
+        .orderBy(direction === 'desc' ? desc(sortColumn) : asc(sortColumn)),
+      db
+        .select({
+          category: productProviderSettings.category,
+          operator: productProviderSettings.operator,
+          aliasOf: productProviderSettings.aliasOf,
+        })
+        .from(productProviderSettings),
+    ]);
+    // The panel needs the alias to merge two vendors into one provider row.
+    const aliasByName = new Map(
+      providers
+        .filter((provider) => provider.aliasOf?.trim())
+        .map((provider) => [
+          `${provider.category}:${provider.operator.toLocaleLowerCase('id-ID')}`,
+          provider.aliasOf!.trim(),
+        ]),
+    );
+    return NextResponse.json({
+      products: rows.map((product) => ({
+        ...product,
+        providerAlias:
+          aliasByName.get(`${product.category}:${product.operator.toLocaleLowerCase('id-ID')}`) ??
+          null,
+      })),
+    });
   } catch (error) {
     console.error(
       '[ADMIN_PRODUCTS_GET_FAILED]',

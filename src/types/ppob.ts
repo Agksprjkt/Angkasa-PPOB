@@ -36,6 +36,9 @@ export interface Product {
   providerIconUrl?: string | null;
   providerCoverUrl?: string | null;
   providerDescription?: string;
+  // Operator name this product's provider is shown as, when an admin merged two
+  // vendors into one storefront card. Empty = use `operator`.
+  providerAlias?: string | null;
   status: 'active' | 'inactive';
   vendor: ProductVendor;
   // Storefront source marker, e.g. "Server 1". Empty = show the vendor name.

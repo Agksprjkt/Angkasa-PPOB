@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { usePPOB } from '@/context/PPOBContext';
 import { CatalogProduct, Product, ProductCategory } from '@/types/ppob';
 import { vendorLabelOf } from '@/lib/vendor-registry';
+import { providerGroupKey, resolveProviderName, sameProviderName } from '@/lib/provider-alias';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -217,7 +218,7 @@ export default function ProductCatalog({
     () => [...new Set(
       products
         .filter((product) => product.status === 'active' && product.category === activeCategory)
-        .map((product) => product.operator.trim())
+        .map((product) => resolveProviderName(product.operator, product.providerAlias))
         .filter(Boolean),
     )].sort((a, b) => a.localeCompare(b, 'id')),
     [products, activeCategory],
@@ -232,28 +233,28 @@ export default function ProductCatalog({
     ? products.find((product) =>
         product.status === 'active' &&
         product.category === activeCategory &&
-        product.operator.toLowerCase() === activeProvider.toLowerCase() &&
+        sameProviderName(resolveProviderName(product.operator, product.providerAlias), activeProvider) &&
         (product.providerCoverUrl || product.providerDescription),
       )
     : null;
   const availableEwallets = useMemo(
     () => [...new Set(products
       .filter((product) => product.status === 'active' && product.category === 'ewallet')
-      .map((product) => product.operator.trim())
+      .map((product) => resolveProviderName(product.operator, product.providerAlias))
       .filter(Boolean))].sort((a, b) => a.localeCompare(b, 'id')),
     [products],
   );
   const availableGames = useMemo(
     () => [...new Set(products
       .filter((product) => product.status === 'active' && product.category === 'game')
-      .map((product) => product.operator.trim())
+      .map((product) => resolveProviderName(product.operator, product.providerAlias))
       .filter(Boolean))].sort((a, b) => a.localeCompare(b, 'id')),
     [products],
   );
   const availableBillTypes = useMemo(
     () => [...new Set(products
       .filter((product) => product.status === 'active' && product.category === 'tagihan')
-      .map((product) => product.operator.trim())
+      .map((product) => resolveProviderName(product.operator, product.providerAlias))
       .filter(Boolean))].sort((a, b) => a.localeCompare(b, 'id')),
     [products],
   );
@@ -271,7 +272,7 @@ export default function ProductCatalog({
       product.status === 'active' &&
       product.category === activeCategory &&
       (!operator || operator === 'All' ||
-        product.operator.toLowerCase() === operator.toLowerCase()),
+        sameProviderName(resolveProviderName(product.operator, product.providerAlias), operator)),
     );
     return [...new Set(
       scoped
@@ -301,25 +302,25 @@ export default function ProductCatalog({
 
       if (activeCategory === 'pulsa' || activeCategory === 'data' || activeCategory === 'voucher') {
         const opToFilter = selectedOperator !== 'All' ? selectedOperator : detectedOperator;
-        if (opToFilter && p.operator.toLowerCase() !== opToFilter.toLowerCase()) {
+        if (opToFilter && !sameProviderName(resolveProviderName(p.operator, p.providerAlias), opToFilter)) {
           return false;
         }
       }
 
       if (activeCategory === 'ewallet') {
-        if (selectedEwallet !== 'All' && p.operator.toLowerCase() !== selectedEwallet.toLowerCase()) {
+        if (selectedEwallet !== 'All' && !sameProviderName(resolveProviderName(p.operator, p.providerAlias), selectedEwallet)) {
           return false;
         }
       }
 
       if (activeCategory === 'game') {
-        if (selectedGame !== 'All' && p.operator.toLowerCase() !== selectedGame.toLowerCase()) {
+        if (selectedGame !== 'All' && !sameProviderName(resolveProviderName(p.operator, p.providerAlias), selectedGame)) {
           return false;
         }
       }
 
       if (activeCategory === 'tagihan') {
-        if (selectedBillType !== 'All' && p.operator.toLowerCase() !== selectedBillType.toLowerCase()) {
+        if (selectedBillType !== 'All' && !sameProviderName(resolveProviderName(p.operator, p.providerAlias), selectedBillType)) {
           return false;
         }
       }
@@ -363,17 +364,24 @@ export default function ProductCatalog({
   })();
 
   const providerCards = useMemo(() => {
-    const groups = new Map<string, { operator: string; product: CatalogProduct; count: number }>();
+    const groups = new Map<string, { operator: string; product: CatalogProduct; count: number; vendors: string[] }>();
     products
       .filter((product) => product.status === 'active' && product.category === activeCategory)
       .forEach((product) => {
-        const key = product.operator.trim().toLocaleLowerCase('id-ID');
+        // An admin alias merges two vendors selling the same brand into one card.
+        const key = providerGroupKey(product.category, product.operator, product.providerAlias);
         const existing = groups.get(key);
         if (existing) {
           existing.count += 1;
-        } else {
-          groups.set(key, { operator: product.operator.trim(), product, count: 1 });
+          if (!existing.vendors.includes(product.vendor)) existing.vendors.push(product.vendor);
+          return;
         }
+        groups.set(key, {
+          operator: resolveProviderName(product.operator, product.providerAlias),
+          product,
+          count: 1,
+          vendors: [product.vendor],
+        });
       });
     return [...groups.values()].sort((a, b) => a.operator.localeCompare(b.operator, 'id'));
   }, [products, activeCategory]);
@@ -383,7 +391,8 @@ export default function ProductCatalog({
       .filter((product) =>
         product.status === 'active' &&
         product.category === activeCategory &&
-        product.operator.toLocaleLowerCase('id-ID') === initialOperator?.toLocaleLowerCase('id-ID'),
+        (!initialOperator ||
+          sameProviderName(resolveProviderName(product.operator, product.providerAlias), initialOperator)),
       )
       .forEach((product) => {
         counts.Semua += 1;
@@ -484,7 +493,7 @@ export default function ProductCatalog({
                 ? 'sm:grid-cols-4 lg:grid-cols-6'
                 : 'sm:grid-cols-3 lg:grid-cols-4'
             }`}>
-              {providerCards.map(({ operator, product, count }) => {
+              {providerCards.map(({ operator, product, count, vendors }) => {
                 const Icon = categoryIcons[activeCategory];
                 const image = product.providerCoverUrl || product.providerIconUrl;
                 return (
@@ -526,6 +535,7 @@ export default function ProductCatalog({
                         </span>
                         <span className="mt-0.5 block text-[11px] text-slate-500">
                           {count} produk tersedia
+                          {vendors.length > 1 ? ` · ${vendors.length} vendor` : ''}
                         </span>
                       </span>
                       <ChevronRight className="h-4 w-4 shrink-0 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-sky-600" />
@@ -635,7 +645,7 @@ export default function ProductCatalog({
                           const providerProduct = products.find((product) =>
                             product.status === 'active' &&
                             product.category === activeCategory &&
-                            product.operator.toLowerCase() === op.toLowerCase() &&
+                            sameProviderName(resolveProviderName(product.operator, product.providerAlias), op) &&
                             product.providerIconUrl,
                           );
                           return providerProduct?.providerIconUrl ? (
@@ -904,13 +914,13 @@ export default function ProductCatalog({
                       product.status === 'active' &&
                       product.category === activeCategory &&
                       (!initialOperator ||
-                        product.operator.toLowerCase() === initialOperator.toLowerCase()),
+                        sameProviderName(resolveProviderName(product.operator, product.providerAlias), initialOperator)),
                     ).length
                   : products.filter((product) =>
                       product.status === 'active' &&
                       product.category === activeCategory &&
                       (!initialOperator ||
-                        product.operator.toLowerCase() === initialOperator.toLowerCase()) &&
+                        sameProviderName(resolveProviderName(product.operator, product.providerAlias), initialOperator)) &&
                       (product.variant ?? '').toLowerCase() === variant.toLowerCase(),
                     ).length;
                 return (

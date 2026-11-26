@@ -262,6 +262,9 @@ export const productProviderSettings = pgTable(
     pricingValue: bigint('pricingValue').notNull().default(0),
     memberPricingType: text('memberPricingType').$type<'fixed' | 'percent'>().notNull().default('fixed'),
     memberPricingValue: bigint('memberPricingValue').notNull().default(0),
+    // Another operator name this one is shown as, so two vendors selling the
+    // same brand (Digiflazz "AXIS", TokoVoucher "DATA AXIS") become one card.
+    aliasOf: text('aliasOf'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

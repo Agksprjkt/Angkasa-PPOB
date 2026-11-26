@@ -40,6 +40,16 @@ export async function GET(request: NextRequest) {
         provider,
       ]),
     );
+    // Aliases let two vendors selling the same brand share one storefront card
+    // (Digiflazz "AXIS" + TokoVoucher "DATA AXIS" -> "AXIS").
+    const aliasByName = new Map(
+      providers
+        .filter((provider) => provider.aliasOf?.trim())
+        .map((provider) => [
+          `${provider.category}:${provider.operator.toLocaleLowerCase('id-ID')}`,
+          provider.aliasOf!.trim(),
+        ]),
+    );
     const saleByProduct = new Map<
       string,
       { id: string; price: number; compareAtPrice: number | null; discountPercent: number; endsAt: Date; quantityRemaining: number | null }
@@ -70,6 +80,9 @@ export async function GET(request: NextRequest) {
           providerIconUrl: provider?.iconUrl ?? null,
           providerCoverUrl: provider?.coverUrl ?? null,
           providerDescription: provider?.description ?? '',
+          providerAlias: aliasByName.get(
+            `${product.category}:${product.operator.toLocaleLowerCase('id-ID')}`,
+          ) ?? null,
         };
         if (isAgent) return catalogProduct;
         const { sellPriceAgent, basePrice, ...publicProduct } = catalogProduct;

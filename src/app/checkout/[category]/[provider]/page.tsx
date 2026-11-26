@@ -12,6 +12,7 @@ import DepositModal from '@/components/DepositModal';
 import Header from '@/components/Header';
 import { Button } from '@/components/ui/button';
 import { usePPOB } from '@/context/PPOBContext';
+import { resolveProviderName, sameProviderName } from '@/lib/provider-alias';
 import type { Product, ProductCategory } from '@/types/ppob';
 
 const categories = new Set<ProductCategory>([
@@ -54,7 +55,7 @@ export default function ProviderCheckoutPage() {
     () => products.filter((product) =>
       product.status === 'active' &&
       product.category === category &&
-      product.operator.toLocaleLowerCase('id-ID') === providerName.toLocaleLowerCase('id-ID'),
+      sameProviderName(resolveProviderName(product.operator, product.providerAlias), providerName),
     ),
     [category, products, providerName],
   );
