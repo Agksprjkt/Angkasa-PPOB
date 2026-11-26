@@ -59,6 +59,10 @@ rows=$(query "
 
 if [ -z "$rows" ]; then
   log "no new failures"
+  # Drop ids that left the window so a later repeat is reported again.
+  if [ -f "$state_file" ]; then
+    : > "$state_file"
+  fi
   exit 0
 fi
 
