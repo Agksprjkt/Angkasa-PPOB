@@ -332,18 +332,59 @@ secret but a bad signature answers `401`. A `500` means something else is wrong.
 ### 8. Backups
 
 `scripts/vps-backup.sh` in the repository dumps Postgres and archives the
-`ppob-data` volume into `/opt/ppob/backups`, keeping the seven most recent
-copies. It resolves the real volume name through `docker compose config`, so it
-works regardless of the Compose project name. Install it once on the host:
+`ppob-data` volume into `/opt/ppob/backups`, verifies the archive, sends it to
+Telegram, and keeps the seven most recent local copies. It resolves the real
+volume name through `docker compose config`, so it works regardless of the
+Compose project name.
+
+The maintenance scripts share one Telegram client (`scripts/telegram.sh`) and read
+their credentials from a file outside the repository. Create the bot with
+`@BotFather`, send it a message, then read the chat id from
+`https://api.telegram.org/bot<token>/getUpdates`:
+
+```sh
+sudo install -d -m 700 /opt/ppob/secrets
+sudo tee /opt/ppob/secrets/backup.env >/dev/null <<'EOF'
+TELEGRAM_BOT_TOKEN=123456:replace-me
+TELEGRAM_CHAT_ID=123456789
+TELEGRAM_RETENTION=30
+EOF
+sudo chown "$USER":"$USER" /opt/ppob/secrets/backup.env
+chmod 600 /opt/ppob/secrets/backup.env
+```
+
+Install the three scripts and schedule them. `17:00` UTC is `00:00` WIB; the
+recap runs at `23:00` WIB so it arrives before the backup:
 
 ```sh
 sudo mkdir -p /opt/ppob/backups && sudo chown "$USER":"$USER" /opt/ppob/backups
-install -m 750 scripts/vps-backup.sh /opt/ppob/backup.sh
-( crontab -l 2>/dev/null; echo '0 3 * * * /opt/ppob/backup.sh >> /opt/ppob/backups/backup.log 2>&1' ) | crontab -
+install -m 750 scripts/telegram.sh            /opt/ppob/telegram.sh
+install -m 750 scripts/vps-backup.sh          /opt/ppob/backup.sh
+install -m 750 scripts/vps-notify-failures.sh /opt/ppob/notify-failures.sh
+install -m 750 scripts/vps-daily-report.sh    /opt/ppob/daily-report.sh
+( crontab -l 2>/dev/null
+  echo '*/5 * * * * /opt/ppob/notify-failures.sh >> /opt/ppob/backups/notify.log 2>&1'
+  echo '0 16 * * * /opt/ppob/daily-report.sh >> /opt/ppob/backups/report.log 2>&1'
+  echo '0 17 * * * /opt/ppob/backup.sh >> /opt/ppob/backups/backup.log 2>&1'
+) | crontab -
 ```
 
-Run it once by hand and confirm the log ends with `backup finished` before
-trusting the schedule.
+Run each script once by hand before trusting the schedule. `backup.sh` must end
+with `backup finished` in the log and the archive must appear in the Telegram
+chat. A missing `TELEGRAM_BOT_TOKEN` only skips the upload; the local archive is
+still written. A failed upload exits non-zero so cron records it in `backup.log`.
+
+The three jobs are:
+
+| Script | When (UTC) | Sends |
+| --- | --- | --- |
+| `notify-failures.sh` | every 5 min | failed and manual-review transactions, silent when none are new |
+| `daily-report.sh` | `0 16` | 24-hour recap: counts, amounts, margin, deposits, attention items, disk, backup age |
+| `backup.sh` | `0 17` | the archive as a Telegram document |
+
+`notify-failures.sh` keeps reported transaction ids in `backups/.failure-state`, so
+a transaction is announced once. Destinations are masked to the last four
+characters before they leave the host.
 
 Restore is rehearsed into a scratch directory, never straight over production:
 
@@ -356,9 +397,25 @@ gunzip -c /tmp/restore/database.sql.gz | docker compose exec -T postgres psql -U
 docker compose exec -T postgres dropdb -U ppob ppob_restore_check
 ```
 
+When the only copy left is the Telegram message, download it and continue the same
+way:
+
+```sh
+token=$(sed -n 's/^TELEGRAM_BOT_TOKEN=//p' /opt/ppob/secrets/backup.env)
+file_id=$(curl -fsS "https://api.telegram.org/bot$token/getUpdates" | grep -o '"file_id":"[^"]*"' | tail -n1 | cut -d'"' -f4)
+path=$(curl -fsS "https://api.telegram.org/bot$token/getFile?file_id=$file_id" | grep -o '"file_path":"[^"]*"' | cut -d'"' -f4)
+curl -fsS -o ppob-restored.tar.gz "https://api.telegram.org/file/bot$token/$path"
+```
+
 The `data.tar.gz` member restores into the `ppob-data` volume; mount it with a
 throwaway container the same way the backup script does. A backup that has never
 been restored is not a backup.
+
+The archive does not include `/opt/ppob/.env` or `/opt/ppob/secrets/`. Without
+`BETTER_AUTH_SECRET` the encrypted fields in `.data/system-config.json` cannot be
+decrypted, and without `secrets/postgres_password` the dump cannot be restored into
+a fresh cluster. Store those values once in a password manager.
+
 
 ## Manual updates without building on the VPS
 
@@ -497,6 +554,12 @@ contains the selected-mode configuration and local uploads/assets (including
 legacy deposit receipts). Keep encrypted copies off the host and periodically
 test a restore into an isolated staging deployment. A database-only backup is
 not sufficient to restore the complete application.
+
+The nightly archive excludes `/opt/ppob/.env` and `/opt/ppob/secrets/` on purpose:
+they hold the keys that decrypt everything else, so they belong in a password
+manager rather than in a chat. Without `BETTER_AUTH_SECRET` the encrypted fields
+in `.data/system-config.json` are unreadable, and without
+`secrets/postgres_password` the dump cannot be restored into a fresh cluster.
 
 For moving the deployment to another VPS, follow the dedicated
 [VPS migration guide](./vps-migration.md). It covers a consistent final
