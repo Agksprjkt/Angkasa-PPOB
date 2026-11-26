@@ -114,6 +114,8 @@ function ProviderDetailPanel({
   });
   const [query, setQuery] = useState('');
   const [productPage, setProductPage] = useState(0);
+  const [sortBy, setSortBy] = useState<'name' | 'price'>('name');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [isLoadingSettings, setIsLoadingSettings] = useState(true);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [isUploading, setIsUploading] = useState<'icon' | 'cover' | null>(null);
@@ -155,13 +157,22 @@ function ProviderDetailPanel({
 
   const filteredProducts = useMemo(() => {
     const search = query.trim().toLocaleLowerCase('id-ID');
-    return products.filter((product) =>
+    const matched = products.filter((product) =>
       !search ||
       product.name.toLocaleLowerCase('id-ID').includes(search) ||
       product.vendorCode.toLocaleLowerCase('id-ID').includes(search) ||
       (product.variant ?? '').toLocaleLowerCase('id-ID').includes(search),
     );
-  }, [products, query]);
+    const direction = sortDirection === 'desc' ? -1 : 1;
+    return [...matched].sort((a, b) => {
+      if (sortBy === 'price') {
+        const diff = a.sellPriceUser - b.sellPriceUser;
+        if (diff !== 0) return diff * direction;
+        return a.name.localeCompare(b.name, 'id');
+      }
+      return a.name.localeCompare(b.name, 'id') * direction;
+    });
+  }, [products, query, sortBy, sortDirection]);
   const allActive = group.allProducts.every((product) => product.status === 'active');
   const activeCount = group.allProducts.filter((product) => product.status === 'active').length;
   const totalCount = group.allProducts.length;
@@ -511,6 +522,31 @@ function ProviderDetailPanel({
               }}
               className="h-9 w-full sm:w-48"
             />
+            <select
+              aria-label="Urutkan produk provider"
+              className="h-9 rounded-md border border-slate-200 bg-white px-2 text-sm"
+              value={sortBy}
+              onChange={(event) => {
+                setSortBy(event.target.value as 'name' | 'price');
+                setProductPage(0);
+              }}
+            >
+              <option value="name">Urutkan: Nama</option>
+              <option value="price">Urutkan: Harga</option>
+            </select>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              aria-label={sortDirection === 'asc' ? 'Urutan menaik' : 'Urutan menurun'}
+              title={sortDirection === 'asc' ? 'Naik' : 'Turun'}
+              onClick={() => {
+                setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+                setProductPage(0);
+              }}
+            >
+              {sortDirection === 'asc' ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />}
+            </Button>
             <Button
               type="button"
               size="sm"
