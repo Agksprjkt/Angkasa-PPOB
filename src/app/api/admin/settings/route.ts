@@ -69,6 +69,9 @@ function snapshotResponse(
       enabled: values.digiflazzEnabled !== 'false',
       enabledSource: sources.digiflazzEnabled,
       enabledEditable: sources.digiflazzEnabled !== 'environment',
+      showProducts: values.digiflazzShowProducts !== 'false',
+      showProductsSource: sources.digiflazzShowProducts,
+      showProductsEditable: sources.digiflazzShowProducts !== 'environment',
       webhookSecret: status('digiflazzWebhookSecret'),
       webhookUrl: `${webhookBaseUrl}/api/digiflazz/webhook`,
       autoSync,
@@ -104,6 +107,9 @@ function snapshotResponse(
       enabled: values.tokovoucherEnabled === 'true',
       enabledSource: sources.tokovoucherEnabled,
       enabledEditable: sources.tokovoucherEnabled !== 'environment',
+      showProducts: values.tokovoucherShowProducts !== 'false',
+      showProductsSource: sources.tokovoucherShowProducts,
+      showProductsEditable: sources.tokovoucherShowProducts !== 'environment',
       webhookSecret: status('tokovoucherWebhookSecret'),
       webhookUrl: `${webhookBaseUrl}/api/tokovoucher/webhook`,
       autoSync: tokoVoucherAutoSync,
@@ -245,6 +251,13 @@ export async function PUT(request: NextRequest) {
     }
     if (
       (name === 'digiflazzEnabled' || name === 'tokovoucherEnabled') &&
+      value !== 'true' &&
+      value !== 'false'
+    ) {
+      return NextResponse.json({ error: 'INVALID_VENDOR_SWITCH' }, { status: 400 });
+    }
+    if (
+      (name === 'digiflazzShowProducts' || name === 'tokovoucherShowProducts') &&
       value !== 'true' &&
       value !== 'false'
     ) {

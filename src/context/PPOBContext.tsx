@@ -63,6 +63,7 @@ interface PPOBContextType {
   refreshProducts: () => Promise<void>;  refreshAdminUsers: () => Promise<void>;
   addProduct: (product: Omit<Product, 'id'>) => void;
   updateProduct: (id: string, updates: Partial<Product>) => Promise<boolean>;
+  bulkUpdateProductStatus: (ids: string[], status: Product['status']) => Promise<boolean>;
   deleteProduct: (id: string) => void;
   applyBulkMarkup: (type: 'nominal' | 'percent', value: number, category?: ProductCategory) => void;
   syncDigiflazzPrices: () => Promise<void>;
@@ -903,6 +904,52 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const bulkUpdateProductStatus = async (
+    ids: string[],
+    status: Product['status'],
+  ): Promise<boolean> => {
+    if (ids.length === 0) return true;
+    // One request for the whole provider. Sending one PATCH per product used to
+    // flood the server on vendors with hundreds of rows and silently failed.
+    const chunks: string[][] = [];
+    for (let index = 0; index < ids.length; index += 1000) {
+      chunks.push(ids.slice(index, index + 1000));
+    }
+    try {
+      const saved = new Map<string, Product>();
+      for (const chunk of chunks) {
+        const response = await fetch('/api/admin/products', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: chunk, status }),
+        });
+        const result = (await response.json()) as { products?: Product[]; error?: string };
+        if (!response.ok || !Array.isArray(result.products)) {
+          throw new Error(result.error ?? 'Status produk gagal diperbarui.');
+        }
+        for (const product of result.products) saved.set(product.id, product);
+      }
+      setCatalog((previous) => ({
+        userId: sessionUserId,
+        role: sessionRole,
+        products: (previous?.products ?? []).map((product) => saved.get(product.id) ?? product),
+      }));
+      addToast(
+        status === 'active' ? 'Produk diaktifkan' : 'Produk dinonaktifkan',
+        `${saved.size.toLocaleString('id-ID')} produk diperbarui.`,
+        'success',
+      );
+      return true;
+    } catch (error) {
+      addToast(
+        'Status produk gagal diperbarui',
+        error instanceof Error ? error.message : 'Terjadi kesalahan.',
+        'error',
+      );
+      return false;
+    }
+  };
+
   const deleteProduct = (id: string) => {
     void fetch(`/api/admin/products?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
       .then(async (response) => {
@@ -976,6 +1023,7 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
     refreshAdminUsers,
         addProduct,
         updateProduct,
+        bulkUpdateProductStatus,
         deleteProduct,
         applyBulkMarkup,
         syncDigiflazzPrices,

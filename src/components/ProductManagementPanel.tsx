@@ -95,7 +95,7 @@ function ProviderDetailPanel({
   onBack: () => void;
   onToggleStatus: (product: Product, status: Product['status']) => Promise<boolean>;
 }) {
-  const { refreshProducts, addToast, updateProduct } = usePPOB();
+  const { refreshProducts, addToast, updateProduct, bulkUpdateProductStatus } = usePPOB();
   const [settings, setSettings] = useState<ProviderSettings>({
     description: '',
     iconUrl: null,
@@ -106,6 +106,7 @@ function ProviderDetailPanel({
     memberPricingValue: 0,
   });
   const [query, setQuery] = useState('');
+  const [productPage, setProductPage] = useState(0);
   const [isLoadingSettings, setIsLoadingSettings] = useState(true);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [isUploading, setIsUploading] = useState<'icon' | 'cover' | null>(null);
@@ -157,6 +158,16 @@ function ProviderDetailPanel({
   const allActive = group.allProducts.every((product) => product.status === 'active');
   const activeCount = group.allProducts.filter((product) => product.status === 'active').length;
   const totalCount = group.allProducts.length;
+
+  // A TokoVoucher provider can hold 600+ rows; rendering them all made the
+  // panel crawl, so the table pages through them.
+  const productsPerPage = 50;
+  const productPageCount = Math.max(1, Math.ceil(filteredProducts.length / productsPerPage));
+  const currentProductPage = Math.min(productPage, productPageCount - 1);
+  const pagedProducts = filteredProducts.slice(
+    currentProductPage * productsPerPage,
+    currentProductPage * productsPerPage + productsPerPage,
+  );
 
   const saveSettings = async (applyPrices: boolean) => {
     setIsSavingSettings(true);
@@ -319,14 +330,13 @@ function ProviderDetailPanel({
 
   const toggleGroupStatus = async () => {
     const nextStatus = allActive ? 'inactive' : 'active';
-    const pendingIds = group.allProducts.map((product) => product.id);
-    setPendingProductIds(new Set(pendingIds));
+    const pendingIds = group.allProducts
+      .filter((product) => product.status !== nextStatus)
+      .map((product) => product.id);
+    if (pendingIds.length === 0) return;
+    setPendingProductIds(new Set(group.allProducts.map((product) => product.id)));
     try {
-      await Promise.all(
-        group.allProducts
-          .filter((product) => product.status !== nextStatus)
-          .map((product) => onToggleStatus(product, nextStatus)),
-      );
+      await bulkUpdateProductStatus(pendingIds, nextStatus);
     } finally {
       setPendingProductIds(new Set());
     }
@@ -447,7 +457,10 @@ function ProviderDetailPanel({
               aria-label="Cari produk provider"
               placeholder="Cari produk…"
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setProductPage(0);
+              }}
               className="h-9 w-full sm:w-48"
             />
             <Button
@@ -529,7 +542,7 @@ function ProviderDetailPanel({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredProducts.map((product) => {
+              {pagedProducts.map((product) => {
                 const active = product.status === 'active';
                 const pending = pendingProductIds.has(product.id);
                 const editing = editingProductId === product.id && productDraft !== null;
@@ -825,6 +838,35 @@ function ProviderDetailPanel({
             </tbody>
           </table>
         </div>
+        {productPageCount > 1 && (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 px-4 py-3 text-xs text-slate-500">
+            <span>
+              Produk {currentProductPage * productsPerPage + 1}–
+              {Math.min(filteredProducts.length, (currentProductPage + 1) * productsPerPage)} dari{' '}
+              {filteredProducts.length.toLocaleString('id-ID')}
+            </span>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={currentProductPage === 0}
+                onClick={() => setProductPage(currentProductPage - 1)}
+              >
+                Sebelumnya
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={currentProductPage >= productPageCount - 1}
+                onClick={() => setProductPage(currentProductPage + 1)}
+              >
+                Berikutnya
+              </Button>
+            </div>
+          </div>
+        )}
       </section>
     </div>
   );
@@ -847,31 +889,55 @@ export default function ProductManagementPanel({
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<ProductCategory | 'all'>('all');
   const [vendor, setVendor] = useState<'all' | Product['vendor']>('all');
+  const [groupPage, setGroupPage] = useState(0);
+  const [pricingPage, setPricingPage] = useState(0);
   const [pendingProductIds, setPendingProductIds] = useState<Set<string>>(
     () => new Set(),
   );
   const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null);
+  const { bulkUpdateProductStatus } = usePPOB();
 
-  const counts = useMemo(
-    () => ({
-      all: products.length,
-      active: products.filter((product) => product.status === 'active').length,
-      inactive: products.filter((product) => product.status === 'inactive').length,
+  // Everything below counts only the selected vendor, so a TokoVoucher filter
+  // never shows Digiflazz totals.
+  const vendorProducts = useMemo(
+    () => products.filter((product) => {
+      if (vendor !== 'all' && product.vendor !== vendor) return false;
+      if (view === 'active' && product.status !== 'active') return false;
+      if (view === 'inactive' && product.status !== 'inactive') return false;
+      return true;
     }),
-    [products],
+    [products, vendor, view],
   );
+
+  const counts = useMemo(() => {
+    let active = 0;
+    for (const product of vendorProducts) {
+      if (product.status === 'active') active += 1;
+    }
+    return {
+      all: vendorProducts.length,
+      active,
+      inactive: vendorProducts.length - active,
+    };
+  }, [vendorProducts]);
+
+  const categoryCounts = useMemo(() => {
+    const tally = new Map<ProductCategory, number>();
+    for (const product of vendorProducts) {
+      tally.set(product.category, (tally.get(product.category) ?? 0) + 1);
+    }
+    return tally;
+  }, [vendorProducts]);
+
   const availableCategories = useMemo(
-    () => categoryOrder.filter((item) => products.some((product) => product.category === item)),
-    [products],
+    () => categoryOrder.filter((item) => categoryCounts.has(item)),
+    [categoryCounts],
   );
 
   const visibleProducts = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase('id-ID');
-    return products.filter((product) => {
-      if (view === 'active' && product.status !== 'active') return false;
-      if (view === 'inactive' && product.status !== 'inactive') return false;
+    return vendorProducts.filter((product) => {
       if (category !== 'all' && product.category !== category) return false;
-      if (vendor !== 'all' && product.vendor !== vendor) return false;
       if (!normalizedQuery) return true;
       return [
         product.name,
@@ -881,39 +947,66 @@ export default function ProductManagementPanel({
         product.category,
       ].some((value) => value.toLocaleLowerCase('id-ID').includes(normalizedQuery));
     });
-  }, [category, products, query, vendor, view]);
-  const providerGroups = useMemo(() => {
+  }, [category, query, vendorProducts]);
+
+  // One pass over the visible products; the provider's full member list is
+  // grouped from the same map instead of re-filtering 10k rows per group.
+  const { providerGroups, groupTotal } = useMemo(() => {
+    const membersByKey = new Map<string, Product[]>();
+    for (const product of vendorProducts) {
+      const key = `${product.category}:${product.operator.toLocaleLowerCase('id-ID')}`;
+      const members = membersByKey.get(key);
+      if (members) members.push(product);
+      else membersByKey.set(key, [product]);
+    }
+
     const groups = new Map<string, {
       key: string;
       category: ProductCategory;
       operator: string;
       products: Product[];
       allProducts: Product[];
+      activeCount: number;
     }>();
     for (const product of visibleProducts) {
       const key = `${product.category}:${product.operator.toLocaleLowerCase('id-ID')}`;
       const existing = groups.get(key);
       if (existing) {
         existing.products.push(product);
-      } else {
-        groups.set(key, {
-          key,
-          category: product.category,
-          operator: product.operator,
-          products: [product],
-          allProducts: products.filter(
-            (item) =>
-              item.category === product.category &&
-              item.operator.toLocaleLowerCase('id-ID') === product.operator.toLocaleLowerCase('id-ID'),
-          ),
-        });
+        continue;
       }
+      const allProducts = membersByKey.get(key) ?? [product];
+      groups.set(key, {
+        key,
+        category: product.category,
+        operator: product.operator,
+        products: [product],
+        allProducts,
+        activeCount: allProducts.filter((item) => item.status === 'active').length,
+      });
     }
-    return [...groups.values()].sort((a, b) =>
+    const sorted = [...groups.values()].sort((a, b) =>
       categoryOrder.indexOf(a.category) - categoryOrder.indexOf(b.category) ||
       a.operator.localeCompare(b.operator, 'id'),
     );
-  }, [products, visibleProducts]);
+    return { providerGroups: sorted, groupTotal: sorted.length };
+  }, [vendorProducts, visibleProducts]);
+
+  const groupsPerPage = 25;
+  const groupPageCount = Math.max(1, Math.ceil(groupTotal / groupsPerPage));
+  const currentGroupPage = Math.min(groupPage, groupPageCount - 1);
+  const pagedGroups = providerGroups.slice(
+    currentGroupPage * groupsPerPage,
+    currentGroupPage * groupsPerPage + groupsPerPage,
+  );
+  // The price table is a flat list, so it pages on its own.
+  const pricingPerPage = 100;
+  const pricingPageCount = Math.max(1, Math.ceil(visibleProducts.length / pricingPerPage));
+  const currentPricingPage = Math.min(pricingPage, pricingPageCount - 1);
+  const pagedVisibleProducts = visibleProducts.slice(
+    currentPricingPage * pricingPerPage,
+    currentPricingPage * pricingPerPage + pricingPerPage,
+  );
 
   const viewDetails: Record<ProductAdminView, { title: string; description: string }> = {
     all: {
@@ -934,16 +1027,16 @@ export default function ProductManagementPanel({
     },
   };
 
-  const toggleProviderStatus = async (group: (typeof providerGroups)[number]) => {
+  const toggleProviderStatus = async (group: ProviderGroup) => {
     const shouldActivate = group.allProducts.some((product) => product.status !== 'active');
-    const pendingIds = group.allProducts.map((product) => product.id);
+    const nextStatus = shouldActivate ? 'active' : 'inactive';
+    const pendingIds = group.allProducts
+      .filter((product) => product.status !== nextStatus)
+      .map((product) => product.id);
+    if (pendingIds.length === 0) return;
     setPendingProductIds((current) => new Set([...current, ...pendingIds]));
     try {
-      await Promise.all(
-        group.allProducts
-          .filter((product) => (shouldActivate ? product.status !== 'active' : product.status !== 'inactive'))
-          .map((product) => onToggleStatus(product, shouldActivate ? 'active' : 'inactive')),
-      );
+      await bulkUpdateProductStatus(pendingIds, nextStatus);
     } finally {
       setPendingProductIds((current) => {
         const next = new Set(current);
@@ -1007,8 +1100,8 @@ export default function ProductManagementPanel({
                 const selected = category === item;
                 const Icon = item === 'all' ? CircleDollarSign : categoryIcons[item];
                 const count = item === 'all'
-                  ? products.length
-                  : products.filter((product) => product.category === item).length;
+                  ? vendorProducts.length
+                  : categoryCounts.get(item) ?? 0;
                 return (
                   <button
                     key={item}
@@ -1050,9 +1143,13 @@ export default function ProductManagementPanel({
               aria-label="Filter vendor"
               className="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm"
               value={vendor}
-              onChange={(event) =>
-                setVendor(event.target.value as 'all' | Product['vendor'])
-              }
+              onChange={(event) => {
+                setVendor(event.target.value as 'all' | Product['vendor']);
+                // A category that exists only under the previous vendor would
+                // otherwise leave the list empty with no way back.
+                setCategory('all');
+                setGroupPage(0);
+              }}
             >
               <option value="all">Semua vendor</option>
               <option value="Digiflazz">Digiflazz</option>
@@ -1064,7 +1161,8 @@ export default function ProductManagementPanel({
           <div className="flex items-center justify-between text-xs text-slate-500">
             <span>
               Menampilkan {visibleProducts.length.toLocaleString('id-ID')} dari{' '}
-              {products.length.toLocaleString('id-ID')} produk
+              {vendorProducts.length.toLocaleString('id-ID')} produk
+              {vendor !== 'all' && ` (${vendor})`}
             </span>
             <span className="hidden items-center gap-1 sm:inline-flex">
               <CircleDollarSign className="h-3.5 w-3.5" />
@@ -1097,7 +1195,7 @@ export default function ProductManagementPanel({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {visibleProducts.map((product) => (
+                    {pagedVisibleProducts.map((product) => (
                       <tr key={product.id} className="hover:bg-slate-50/70">
                         <td className="px-4 py-3">
                           <span className="block font-medium text-slate-900">{product.name}</span>
@@ -1140,6 +1238,35 @@ export default function ProductManagementPanel({
                     ))}
                   </tbody>
                 </table>
+                {pricingPageCount > 1 && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 px-4 py-3 text-xs text-slate-500">
+                    <span>
+                      Produk {currentPricingPage * pricingPerPage + 1}–
+                      {Math.min(visibleProducts.length, (currentPricingPage + 1) * pricingPerPage)} dari{' '}
+                      {visibleProducts.length.toLocaleString('id-ID')}
+                    </span>
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={currentPricingPage === 0}
+                        onClick={() => setPricingPage(currentPricingPage - 1)}
+                      >
+                        Sebelumnya
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={currentPricingPage >= pricingPageCount - 1}
+                        onClick={() => setPricingPage(currentPricingPage + 1)}
+                      >
+                        Berikutnya
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
             )
           ) : providerGroups.length === 0 ? (
@@ -1160,15 +1287,17 @@ export default function ProductManagementPanel({
                   <span className="text-center">Status</span>
                   <span className="text-center">Aksi</span>
                 </div>
-                {providerGroups.map((group, index) => {
-                  const activeCount = group.allProducts.filter((product) => product.status === 'active').length;
+                {pagedGroups.map((group, index) => {
+                  const activeCount = group.activeCount;
                   const allActive = activeCount === group.allProducts.length;
                   const someActive = activeCount > 0;
                   const pending = group.allProducts.some((product) => pendingProductIds.has(product.id));
                   return (
                     <section key={group.key} className="border-t border-slate-200 first:border-t-0">
                       <div className="grid min-h-14 grid-cols-[minmax(0,1fr)_5rem_4rem] items-center gap-3 px-4 py-2 sm:grid-cols-[3rem_minmax(0,1fr)_7rem_5rem]">
-                        <span className="text-xs text-slate-500">{index + 1}</span>
+                        <span className="text-xs text-slate-500">
+                          {currentGroupPage * groupsPerPage + index + 1}
+                        </span>
                         <div className="flex min-w-0 items-center gap-3">
                           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-sky-50 text-[10px] font-bold uppercase text-sky-700">
                             {group.operator.slice(0, 2)}
@@ -1217,6 +1346,35 @@ export default function ProductManagementPanel({
                   );
                 })}
               </div>
+              {groupPageCount > 1 && (
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 px-4 py-3 text-xs text-slate-500">
+                  <span>
+                    Provider {currentGroupPage * groupsPerPage + 1}–
+                    {Math.min(groupTotal, (currentGroupPage + 1) * groupsPerPage)} dari{' '}
+                    {groupTotal.toLocaleString('id-ID')}
+                  </span>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={currentGroupPage === 0}
+                      onClick={() => setGroupPage(currentGroupPage - 1)}
+                    >
+                      Sebelumnya
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={currentGroupPage >= groupPageCount - 1}
+                      onClick={() => setGroupPage(currentGroupPage + 1)}
+                    >
+                      Berikutnya
+                    </Button>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </CardContent>

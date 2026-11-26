@@ -48,6 +48,10 @@ const settingNames = [
   'digiflazzWebhookSecret',
   'tokovoucherEnabled',
   'tokovoucherWebhookSecret',
+  // Dashboard visibility only: hides a vendor's products from the admin list
+  // without touching orders or the storefront catalogue.
+  'digiflazzShowProducts',
+  'tokovoucherShowProducts',
 ] as const;
 
 export type IntegrationSettingName = (typeof settingNames)[number];
@@ -102,6 +106,8 @@ export const integrationSettingEnvironmentNames: Record<
   digiflazzWebhookSecret: 'DIGIFLAZZ_WEBHOOK_SECRET',
   tokovoucherEnabled: 'TOKOVOUCHER_ENABLED',
   tokovoucherWebhookSecret: 'TOKOVOUCHER_WEBHOOK_SECRET',
+  digiflazzShowProducts: 'DIGIFLAZZ_SHOW_PRODUCTS',
+  tokovoucherShowProducts: 'TOKOVOUCHER_SHOW_PRODUCTS',
 };
 
 export function isIntegrationSettingName(
@@ -416,6 +422,8 @@ export async function getVendorRuntimeConfig() {
   return {
     digiflazzEnabled: values.digiflazzEnabled !== 'false',
     tokovoucherEnabled: values.tokovoucherEnabled === 'true',
+    digiflazzShowProducts: values.digiflazzShowProducts !== 'false',
+    tokovoucherShowProducts: values.tokovoucherShowProducts !== 'false',
     digiflazzWebhookSecret: values.digiflazzWebhookSecret ?? '',
     tokovoucherWebhookSecret: values.tokovoucherWebhookSecret ?? '',
     digiflazzEnabledSource: sources.digiflazzEnabled,

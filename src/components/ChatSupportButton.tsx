@@ -5,9 +5,9 @@ import { Headset } from 'lucide-react';
 import { usePPOB } from '@/context/PPOBContext';
 import { buildWhatsAppMessageUrl } from '@/lib/contact-message';
 
-// Persistent support entry point, shaped like the reference storefront: a tab
-// pinned to the bottom-right corner. Mobile lifts it above the bottom nav so
-// both stay tappable; desktop sits flush on the viewport edge.
+// Persistent support entry point. On phones it docks to the right edge so it
+// never fights the bottom navigation; from sm: upwards it becomes the bottom
+// right tab used by the reference storefront.
 export default function ChatSupportButton() {
   const pathname = usePathname();
   const { storeName, storeSocialLinks } = usePPOB();
@@ -28,10 +28,10 @@ export default function ChatSupportButton() {
       rel="noreferrer noopener"
       aria-label="Chat CS via WhatsApp"
       title="Chat CS"
-      className="fixed bottom-[calc(5rem+env(safe-area-inset-bottom))] right-4 z-50 inline-flex items-center gap-2.5 rounded-t-lg bg-emerald-600 px-3 pb-2 pt-3 text-xs font-semibold uppercase tracking-wide text-white shadow-[0_-6px_24px_-10px_rgba(5,150,105,0.7)] transition-colors hover:bg-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2 sm:bottom-0 sm:px-5"
+      className="fixed right-0 top-1/2 z-50 inline-flex -translate-y-1/2 items-center gap-2 rounded-l-lg bg-emerald-600 px-2 py-3 text-xs font-semibold uppercase tracking-wide text-white shadow-[-4px_0_18px_-8px_rgba(5,150,105,0.8)] transition-colors hover:bg-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2 sm:bottom-0 sm:right-4 sm:top-auto sm:translate-y-0 sm:rounded-tl-lg sm:rounded-tr-lg sm:rounded-bl-none sm:px-5 sm:pb-2 sm:pt-3"
     >
       <Headset className="h-4 w-4" aria-hidden="true" />
-      <span className="hidden sm:inline">Chat CS</span>
+      <span className="sr-only sm:not-sr-only">Chat CS</span>
     </a>
   );
 }

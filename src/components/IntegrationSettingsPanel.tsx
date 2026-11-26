@@ -80,6 +80,9 @@ type SettingsSnapshot = {
     enabled: boolean;
     enabledSource: SettingStatus['source'];
     enabledEditable: boolean;
+    showProducts: boolean;
+    showProductsSource: SettingStatus['source'];
+    showProductsEditable: boolean;
     webhookSecret: SettingStatus;
     webhookUrl: string;
     autoSync: AutoSyncSettings;
@@ -114,6 +117,9 @@ type SettingsSnapshot = {
     enabled: boolean;
     enabledSource: SettingStatus['source'];
     enabledEditable: boolean;
+    showProducts: boolean;
+    showProductsSource: SettingStatus['source'];
+    showProductsEditable: boolean;
     webhookSecret: SettingStatus;
     webhookUrl: string;
     autoSync: AutoSyncSettings;
@@ -319,8 +325,10 @@ export default function IntegrationSettingsPanel({
   const [tokovoucherRealTransactions, setTokovoucherRealTransactions] = useState(false);
   const [tokovoucherAutoSyncInterval, setTokovoucherAutoSyncInterval] = useState<7 | 14 | 30>(7);
   const [digiflazzEnabled, setDigiflazzEnabled] = useState(true);
+  const [digiflazzShowProducts, setDigiflazzShowProducts] = useState(true);
   const [digiflazzWebhookSecret, setDigiflazzWebhookSecret] = useState('');
   const [tokovoucherEnabled, setTokovoucherEnabled] = useState(false);
+  const [tokovoucherShowProducts, setTokovoucherShowProducts] = useState(true);
   const [tokovoucherWebhookSecret, setTokovoucherWebhookSecret] = useState('');
   const [pendingDisable, setPendingDisable] = useState<IntegrationSection | null>(null);
   const [copiedWebhook, setCopiedWebhook] = useState<string | null>(null);
@@ -380,7 +388,9 @@ export default function IntegrationSettingsPanel({
         setTokovoucherRealTransactions(body.tokovoucher.enableRealTransactions);
         setTokovoucherAutoSyncInterval(body.tokovoucher.autoSync.intervalDays);
         setDigiflazzEnabled(body.digiflazz.enabled);
+        setDigiflazzShowProducts(body.digiflazz.showProducts);
         setTokovoucherEnabled(body.tokovoucher.enabled);
+        setTokovoucherShowProducts(body.tokovoucher.showProducts);
       })
       .catch((error: unknown) => {
         if (active) {
@@ -473,6 +483,9 @@ export default function IntegrationSettingsPanel({
       if (snapshot.digiflazz.enabledEditable) {
         values.digiflazzEnabled = String(digiflazzEnabled);
       }
+      if (snapshot.digiflazz.showProductsEditable) {
+        values.digiflazzShowProducts = String(digiflazzShowProducts);
+      }
       if (digiflazzWebhookSecret) {
         values.digiflazzWebhookSecret = digiflazzWebhookSecret;
       }
@@ -490,6 +503,9 @@ export default function IntegrationSettingsPanel({
       }
       if (snapshot.tokovoucher.enabledEditable) {
         values.tokovoucherEnabled = String(tokovoucherEnabled);
+      }
+      if (snapshot.tokovoucher.showProductsEditable) {
+        values.tokovoucherShowProducts = String(tokovoucherShowProducts);
       }
       if (tokovoucherWebhookSecret) {
         values.tokovoucherWebhookSecret = tokovoucherWebhookSecret;
@@ -1194,6 +1210,25 @@ export default function IntegrationSettingsPanel({
               Aktif
             </label>
           </div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-sm font-medium text-slate-800">Tampilkan produk di dashboard</p>
+              <p className="text-xs text-slate-500">
+                Mematikan ini hanya menyembunyikan produk Digiflazz dari daftar produk di
+                dashboard. Katalog toko dan pesanan tidak terpengaruh.
+              </p>
+            </div>
+            <label className="flex items-center gap-2 text-xs text-slate-600">
+              <input
+                type="checkbox"
+                checked={digiflazzShowProducts}
+                disabled={!snapshot.digiflazz.showProductsEditable}
+                onChange={(event) => setDigiflazzShowProducts(event.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-blue-700 focus:ring-blue-600"
+              />
+              Tampilkan
+            </label>
+          </div>
           <WebhookField
             id="digiflazz-webhook"
             url={snapshot.digiflazz.webhookUrl}
@@ -1330,6 +1365,25 @@ export default function IntegrationSettingsPanel({
                 className="h-4 w-4 rounded border-slate-300 text-blue-700 focus:ring-blue-600"
               />
               Aktif
+            </label>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-sm font-medium text-slate-800">Tampilkan produk di dashboard</p>
+              <p className="text-xs text-slate-500">
+                Mematikan ini hanya menyembunyikan produk TokoVoucher dari daftar produk di
+                dashboard. Katalog toko dan pesanan tidak terpengaruh.
+              </p>
+            </div>
+            <label className="flex items-center gap-2 text-xs text-slate-600">
+              <input
+                type="checkbox"
+                checked={tokovoucherShowProducts}
+                disabled={!snapshot.tokovoucher.showProductsEditable}
+                onChange={(event) => setTokovoucherShowProducts(event.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-blue-700 focus:ring-blue-600"
+              />
+              Tampilkan
             </label>
           </div>
           <WebhookField

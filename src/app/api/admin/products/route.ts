@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { asc, eq } from 'drizzle-orm';
+import { asc, eq, inArray, notInArray } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import type { Product, ProductCategory } from '@/types/ppob';
 import { isAdministrator } from '@/lib/server/authorization';
 import { getDatabase } from '@/lib/server/db/client';
 import { products } from '@/lib/server/db/schema';
+import { getVendorRuntimeConfig } from '@/lib/server/integration-settings';
+import { parseBulkStatusInput } from '@/lib/product-bulk-update';
 
 export const runtime = 'nodejs';
 
@@ -78,9 +80,18 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    // A vendor can be hidden from the dashboard without touching its orders or
+    // the storefront catalogue, so the list stays small for big vendors.
+    const { digiflazzShowProducts, tokovoucherShowProducts } =
+      await getVendorRuntimeConfig();
+    const hiddenVendors = [
+      ...(digiflazzShowProducts ? [] : (['Digiflazz'] as const)),
+      ...(tokovoucherShowProducts ? [] : (['TokoVoucher'] as const)),
+    ];
     const rows = await getDatabase()
       .select()
       .from(products)
+      .where(hiddenVendors.length ? notInArray(products.vendor, [...hiddenVendors]) : undefined)
       .orderBy(asc(products.name));
     return NextResponse.json({ products: rows });
   } catch (error) {
@@ -136,6 +147,38 @@ export async function PATCH(request: NextRequest) {
   } catch {
     return NextResponse.json({ error: 'INVALID_JSON' }, { status: 400 });
   }
+
+  // Bulk path: flipping a whole provider must be one statement, not one request
+  // per product. A 600-product provider used to fire 600 parallel PATCHes.
+  if (
+    typeof payload === 'object' &&
+    payload !== null &&
+    !Array.isArray(payload) &&
+    'ids' in payload
+  ) {
+    const parsed = parseBulkStatusInput(payload);
+    if (!parsed.ok) {
+      return NextResponse.json({ error: parsed.error }, { status: 400 });
+    }
+    try {
+      const updated = await getDatabase()
+        .update(products)
+        .set({ status: parsed.input.status, updatedAt: new Date() })
+        .where(inArray(products.id, parsed.input.ids))
+        .returning();
+      return NextResponse.json({ products: updated });
+    } catch (error) {
+      console.error(
+        '[ADMIN_PRODUCTS_BULK_STATUS_FAILED]',
+        error instanceof Error ? error.message : 'Unknown database error',
+      );
+      return NextResponse.json(
+        { error: 'PRODUCT_COULD_NOT_BE_UPDATED' },
+        { status: 409 },
+      );
+    }
+  }
+
   if (
     typeof payload !== 'object' ||
     payload === null ||
@@ -175,6 +218,7 @@ export async function PATCH(request: NextRequest) {
       'compareAtPrice',
       'status',
       'vendor',
+      'vendorLabel',
     ]);
     const currentProduct = {
       vendorCode: existing.vendorCode,
@@ -189,6 +233,7 @@ export async function PATCH(request: NextRequest) {
       compareAtPrice: existing.compareAtPrice,
       status: existing.status,
       vendor: existing.vendor,
+      vendorLabel: existing.vendorLabel,
     };
     if (
       Object.keys(updates).length === 0 ||
