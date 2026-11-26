@@ -2,6 +2,7 @@
 
 import type { ReactNode } from 'react';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import type { SystemConfig } from '@/lib/system-config-core';
 
 export type SystemSnapshot = {
@@ -46,19 +47,12 @@ export function Toggle({
   disabled?: boolean;
 }) {
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
+    <Switch
+      checked={checked}
+      onCheckedChange={onChange}
       aria-label={label}
       disabled={disabled}
-      onClick={() => onChange(!checked)}
-      className={`inline-flex h-6 w-11 shrink-0 items-center rounded-full p-0.5 transition-colors disabled:opacity-50 ${
-        checked ? 'bg-emerald-500' : 'bg-slate-300'
-      }`}
-    >
-      <span className={`h-5 w-5 rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-5' : ''}`} />
-    </button>
+    />
   );
 }
 

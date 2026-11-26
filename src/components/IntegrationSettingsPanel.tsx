@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { ChevronDown } from 'lucide-react';
 import { ConfirmationDialog } from '@/components/ui/confirmation-dialog';
 import { LoadingState } from '@/components/ui/crystal-loader';
@@ -235,6 +236,8 @@ function SecretField({
   onChange,
   clear,
   onClearChange,
+  onGenerate,
+  generating,
 }: {
   id: string;
   label: string;
@@ -243,8 +246,11 @@ function SecretField({
   onChange: (value: string) => void;
   clear: boolean;
   onClearChange: (checked: boolean) => void;
+  onGenerate?: () => void;
+  generating?: boolean;
 }) {
   const [confirmClear, setConfirmClear] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   return (
     <>
@@ -267,20 +273,53 @@ function SecretField({
           }
           disabled={!status.editable}
         />
-        {status.configured && status.editable && (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800"
-            onClick={() => {
-              if (clear) onClearChange(false);
-              else setConfirmClear(true);
-            }}
-          >
-            {clear ? 'Batalkan penghapusan' : 'Hapus kredensial'}
-          </Button>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {value && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(value);
+                  setCopied(true);
+                  window.setTimeout(() => setCopied(false), 2000);
+                } catch {
+                  setCopied(false);
+                }
+              }}
+            >
+              {copied ? 'Tersalin' : 'Salin nilai'}
+            </Button>
+          )}
+          {onGenerate && status.editable && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={generating}
+              onClick={onGenerate}
+            >
+              {generating
+                ? 'Membuat…'
+                : status.configured ? 'Regenerate' : 'Generate'}
+            </Button>
+          )}
+          {status.configured && status.editable && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="border-rose-200 text-rose-700 hover:bg-rose-50 hover:text-rose-800"
+              onClick={() => {
+                if (clear) onClearChange(false);
+                else setConfirmClear(true);
+              }}
+            >
+              {clear ? 'Batalkan penghapusan' : 'Hapus kredensial'}
+            </Button>
+          )}
+        </div>
       </div>
       <ConfirmationDialog
         open={confirmClear}
@@ -359,6 +398,14 @@ export default function IntegrationSettingsPanel({
   const [isLoading, setIsLoading] = useState(true);
   const [savingSections, setSavingSections] = useState<IntegrationSection[]>([]);
 
+  // Re-reads the snapshot after a server-side change, so the status badges and
+  // the "configured" labels reflect the new secret immediately.
+  const refreshSnapshot = async () => {
+    const response = await fetch('/api/admin/settings', { cache: 'no-store' });
+    if (!response.ok) return;
+    setSnapshot((await response.json()) as SettingsSnapshot);
+  };
+
   useEffect(() => {
     let active = true;
     void fetch('/api/admin/settings')
@@ -416,6 +463,48 @@ export default function IntegrationSettingsPanel({
         ? [...new Set([...current, name])]
         : current.filter((value) => value !== name),
     );
+  };
+
+  // A generated secret is returned once. Stored targets are saved immediately;
+  // the auth secret only comes back for the admin to paste into .env.
+  const [generatingSecret, setGeneratingSecret] = useState<string | null>(null);
+  const generateSecretFor = async (target: string) => {
+    setGeneratingSecret(target);
+    try {
+      const response = await fetch('/api/admin/integration-secrets/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target }),
+      });
+      const body = await response.json() as { value?: string; saved?: boolean; error?: string };
+      if (!response.ok || typeof body.value !== 'string') {
+        throw new Error(body.error ?? 'Secret baru tidak dapat dibuat.');
+      }
+      if (body.saved) {
+        await refreshSnapshot();
+        addToast(
+          'Secret baru aktif',
+          'Tempel nilai ini ke panel vendor sekarang; nilainya tidak ditampilkan lagi.',
+          'success',
+        );
+      } else {
+        addToast(
+          'Secret dibuat',
+          'Salin ke BETTER_AUTH_SECRET di .env lalu jalankan ulang container. Semua sesi akan logout.',
+          'warning',
+        );
+      }
+      return body.value;
+    } catch (error) {
+      addToast(
+        'Secret gagal dibuat',
+        error instanceof Error ? error.message : 'Silakan coba kembali.',
+        'error',
+      );
+      return null;
+    } finally {
+      setGeneratingSecret(null);
+    }
   };
 
   const copyWebhookUrl = async (url: string) => {
@@ -1066,26 +1155,21 @@ export default function IntegrationSettingsPanel({
             </div>
           </div>
 
-          <label className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
-            <input
-              type="checkbox"
-              className="mt-1"
-              checked={enableRealTransactions}
-              onChange={(event) =>
-                setEnableRealTransactions(event.target.checked)
-              }
-              disabled={!snapshot.digiflazz.enableRealTransactionsEditable}
-            />
-            <span>
-              <span className="block font-medium">Izinkan transaksi produksi</span>
-              <span className="mt-0.5 block text-xs">
-                Pesanan dapat memicu transaksi vendor nyata.
-              </span>
-              <span className="mt-1 block text-xs text-slate-600">
+          <div className="flex items-start justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+            <div>
+              <p className="font-medium">Izinkan transaksi produksi</p>
+              <p className="mt-0.5 text-xs">Pesanan dapat memicu transaksi vendor nyata.</p>
+              <p className="mt-1 text-xs text-slate-600">
                 {sourceText(snapshot.digiflazz.enableRealTransactionsSource)}
-              </span>
-            </span>
-          </label>
+              </p>
+            </div>
+            <Switch
+              checked={enableRealTransactions}
+              onCheckedChange={setEnableRealTransactions}
+              disabled={!snapshot.digiflazz.enableRealTransactionsEditable}
+              aria-label="Izinkan transaksi produksi Digiflazz"
+            />
+          </div>
 
           <div className="space-y-3 rounded-lg border border-slate-200 p-4">
             <div>
@@ -1120,28 +1204,25 @@ export default function IntegrationSettingsPanel({
           </div>
           <div className="space-y-3 rounded-lg border border-slate-200 p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
-              <label className="flex items-start gap-3 text-sm">
-                <input
-                  type="checkbox"
-                  className="mt-1"
-                  checked={snapshot.digiflazz.autoSync.enabled}
-                  onChange={(event) => void handleAutoSyncToggle(event.target.checked)}
-                  disabled={
-                    isSavingAutoSync ||
-                    !snapshot.digiflazz.autoSync.enabledEditable ||
-                    !snapshot.digiflazz.autoSync.intervalEditable
-                  }
-                />
-                <span>
-                  <span className="block font-medium">Sync produk otomatis</span>
-                  <span className="mt-0.5 block text-xs text-slate-500">
-                    Memperbarui produk, harga jual, dan harga Member dari Digiflazz.
-                  </span>
-                  <span className="mt-1 block text-xs text-slate-500">
-                    {sourceText(snapshot.digiflazz.autoSync.enabledSource)}
-                  </span>
-                </span>
-              </label>
+              <div className="text-sm">
+                <p className="font-medium">Sync produk otomatis</p>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  Memperbarui produk, harga jual, dan harga Member dari Digiflazz.
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  {sourceText(snapshot.digiflazz.autoSync.enabledSource)}
+                </p>
+              </div>
+              <Switch
+                checked={snapshot.digiflazz.autoSync.enabled}
+                onCheckedChange={(value) => void handleAutoSyncToggle(value)}
+                disabled={
+                  isSavingAutoSync ||
+                  !snapshot.digiflazz.autoSync.enabledEditable ||
+                  !snapshot.digiflazz.autoSync.intervalEditable
+                }
+                aria-label="Sync produk otomatis Digiflazz"
+              />
               {snapshot.digiflazz.autoSync.enabled &&
                 snapshot.digiflazz.autoSync.intervalEditable && (
                   <Button
@@ -1199,16 +1280,12 @@ export default function IntegrationSettingsPanel({
                 diselesaikan.
               </p>
             </div>
-            <label className="flex items-center gap-2 text-xs text-slate-600">
-              <input
-                type="checkbox"
-                checked={digiflazzEnabled}
-                disabled={!snapshot.digiflazz.enabledEditable}
-                onChange={(event) => requestVendorToggle('digiflazz', event.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-blue-700 focus:ring-blue-600"
-              />
-              Aktif
-            </label>
+            <Switch
+              checked={digiflazzEnabled}
+              disabled={!snapshot.digiflazz.enabledEditable}
+              onCheckedChange={(value) => requestVendorToggle('digiflazz', value)}
+              aria-label="Aktifkan vendor Digiflazz"
+            />
           </div>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -1218,16 +1295,12 @@ export default function IntegrationSettingsPanel({
                 dashboard. Katalog toko dan pesanan tidak terpengaruh.
               </p>
             </div>
-            <label className="flex items-center gap-2 text-xs text-slate-600">
-              <input
-                type="checkbox"
-                checked={digiflazzShowProducts}
-                disabled={!snapshot.digiflazz.showProductsEditable}
-                onChange={(event) => setDigiflazzShowProducts(event.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-blue-700 focus:ring-blue-600"
-              />
-              Tampilkan
-            </label>
+            <Switch
+              checked={digiflazzShowProducts}
+              disabled={!snapshot.digiflazz.showProductsEditable}
+              onCheckedChange={setDigiflazzShowProducts}
+              aria-label="Tampilkan produk Digiflazz di dashboard"
+            />
           </div>
           <WebhookField
             id="digiflazz-webhook"
@@ -1244,6 +1317,11 @@ export default function IntegrationSettingsPanel({
             onChange={setDigiflazzWebhookSecret}
             clear={clearSettings.includes('digiflazzWebhookSecret')}
             onClearChange={(checked) => toggleClear('digiflazzWebhookSecret', checked)}
+            generating={generatingSecret === 'digiflazzWebhookSecret'}
+            onGenerate={async () => {
+              const value = await generateSecretFor('digiflazzWebhookSecret');
+              if (value) setDigiflazzWebhookSecret(value);
+            }}
           />
         </CardContent>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -1331,16 +1409,15 @@ export default function IntegrationSettingsPanel({
                     <option value="production">Produksi</option>
                   </select>
                 </div>
-                <label className="flex min-h-11 items-center gap-2 text-sm text-slate-700">
-                  <input
-                    type="checkbox"
+                <div className="flex min-h-11 items-center justify-between gap-2 text-sm text-slate-700">
+                  <span>Izinkan transaksi nyata</span>
+                  <Switch
                     checked={tokovoucherRealTransactions}
                     disabled={!snapshot.tokovoucher.enableRealTransactionsEditable}
-                    onChange={(event) => setTokovoucherRealTransactions(event.target.checked)}
-                    className="h-4 w-4 rounded border-slate-300 text-blue-700 focus:ring-blue-600"
+                    onCheckedChange={setTokovoucherRealTransactions}
+                    aria-label="Izinkan transaksi nyata TokoVoucher"
                   />
-                  Izinkan transaksi nyata
-                </label>
+                </div>
               </div>
               <p className="text-xs text-slate-500">
                 Sakelar ini terpisah dari Digiflazz. Mengaktifkan salah satu tidak
@@ -1356,16 +1433,12 @@ export default function IntegrationSettingsPanel({
                 diselesaikan.
               </p>
             </div>
-            <label className="flex items-center gap-2 text-xs text-slate-600">
-              <input
-                type="checkbox"
-                checked={tokovoucherEnabled}
-                disabled={!snapshot.tokovoucher.enabledEditable}
-                onChange={(event) => requestVendorToggle('tokovoucher', event.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-blue-700 focus:ring-blue-600"
-              />
-              Aktif
-            </label>
+            <Switch
+              checked={tokovoucherEnabled}
+              disabled={!snapshot.tokovoucher.enabledEditable}
+              onCheckedChange={(value) => requestVendorToggle('tokovoucher', value)}
+              aria-label="Aktifkan vendor TokoVoucher"
+            />
           </div>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -1375,16 +1448,12 @@ export default function IntegrationSettingsPanel({
                 dashboard. Katalog toko dan pesanan tidak terpengaruh.
               </p>
             </div>
-            <label className="flex items-center gap-2 text-xs text-slate-600">
-              <input
-                type="checkbox"
-                checked={tokovoucherShowProducts}
-                disabled={!snapshot.tokovoucher.showProductsEditable}
-                onChange={(event) => setTokovoucherShowProducts(event.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-blue-700 focus:ring-blue-600"
-              />
-              Tampilkan
-            </label>
+            <Switch
+              checked={tokovoucherShowProducts}
+              disabled={!snapshot.tokovoucher.showProductsEditable}
+              onCheckedChange={setTokovoucherShowProducts}
+              aria-label="Tampilkan produk TokoVoucher di dashboard"
+            />
           </div>
           <WebhookField
             id="tokovoucher-webhook"
@@ -1401,6 +1470,11 @@ export default function IntegrationSettingsPanel({
             onChange={setTokovoucherWebhookSecret}
             clear={clearSettings.includes('tokovoucherWebhookSecret')}
             onClearChange={(checked) => toggleClear('tokovoucherWebhookSecret', checked)}
+            generating={generatingSecret === 'tokovoucherWebhookSecret'}
+            onGenerate={async () => {
+              const value = await generateSecretFor('tokovoucherWebhookSecret');
+              if (value) setTokovoucherWebhookSecret(value);
+            }}
           />
         </CardContent>
         <div className="flex flex-wrap items-center gap-3">
@@ -1425,21 +1499,14 @@ export default function IntegrationSettingsPanel({
             <CardContent className="space-y-3 p-0">
               <div className="flex items-center justify-between gap-2">
                 <p className="text-sm font-medium text-slate-800">Sync otomatis</p>
-                <label className="flex items-center gap-2 text-xs text-slate-600">
-                  <input
-                    type="checkbox"
-                    checked={snapshot.tokovoucher.autoSync.enabled}
-                    disabled={!snapshot.tokovoucher.autoSync.enabledEditable}
-                    onChange={(event) =>
-                      void persistTokoVoucherAutoSync(
-                        event.target.checked,
-                        tokovoucherAutoSyncInterval,
-                      )
-                    }
-                    className="h-4 w-4 rounded border-slate-300 text-blue-700 focus:ring-blue-600"
-                  />
-                  Aktifkan
-                </label>
+                <Switch
+                  checked={snapshot.tokovoucher.autoSync.enabled}
+                  disabled={!snapshot.tokovoucher.autoSync.enabledEditable}
+                  onCheckedChange={(value) =>
+                    void persistTokoVoucherAutoSync(value, tokovoucherAutoSyncInterval)
+                  }
+                  aria-label="Sync otomatis TokoVoucher"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="tokovoucher-sync-interval">Sinkronkan setiap</Label>
@@ -1647,16 +1714,18 @@ export default function IntegrationSettingsPanel({
                 <option value="production">Produksi</option>
               </select>
             </div>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm">Aktifkan Qrisly untuk deposit</p>
+                <p className="text-xs text-slate-500">{sourceText(snapshot.qrisly.enabledSource)}</p>
+              </div>
+              <Switch
                 checked={qrislyEnabled}
-                onChange={(event) => setQrislyEnabled(event.target.checked)}
+                onCheckedChange={setQrislyEnabled}
                 disabled={!snapshot.qrisly.enabledEditable}
+                aria-label="Aktifkan Qrisly untuk deposit"
               />
-              Aktifkan Qrisly untuk deposit
-            </label>
-            <p className="text-xs text-slate-500">{sourceText(snapshot.qrisly.enabledSource)}</p>
+            </div>
           </div>
           <div className="space-y-3 rounded-lg border border-slate-200 p-4">
             <h4 className="text-sm font-semibold">Unggah QR merchant ke Qrisly</h4>

@@ -4,14 +4,17 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { LoadingState } from '@/components/ui/crystal-loader';
+import { usePPOB } from '@/context/PPOBContext';
 import DatabaseCard from './system-settings/DatabaseCard';
 import RedisCard from './system-settings/RedisCard';
 import StorageCard from './system-settings/StorageCard';
 import StorefrontCard from './system-settings/StorefrontCard';
+import SecurityCard from './system-settings/SecurityCard';
 import { errorText, type SystemSnapshot } from './system-settings/shared';
 import type { SystemConfig } from '@/lib/system-config-core';
 
 export default function SystemSettingsPanel() {
+  const { addToast } = usePPOB();
   const [snapshot, setSnapshot] = useState<SystemSnapshot | null>(null);
   const [draft, setDraft] = useState<SystemConfig | null>(null);
   const [error, setError] = useState('');
@@ -155,6 +158,12 @@ export default function SystemSettingsPanel() {
       <Card>
         <CardContent className="p-5">
           <StorefrontCard draft={draft} snapshot={snapshot} onChange={change} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="p-5">
+          <SecurityCard addToast={addToast} />
         </CardContent>
       </Card>
 
