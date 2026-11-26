@@ -3,6 +3,7 @@ import { and, asc, eq } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import { getFlashSalePrice } from '@/lib/flash-sale';
 import { isAdministrator } from '@/lib/server/authorization';
+import { invalidateCatalog } from '@/lib/server/catalog-cache';
 import { getDatabase } from '@/lib/server/db/client';
 import { flashSaleOffers, products } from '@/lib/server/db/schema';
 
@@ -170,6 +171,7 @@ export async function POST(request: NextRequest) {
       .insert(flashSaleOffers)
       .values({ ...input, salePrice, id: randomUUID() })
       .returning();
+    await invalidateCatalog();
     return NextResponse.json({ offer }, { status: 201 });
   } catch (error) {
     console.error(
@@ -242,6 +244,7 @@ export async function PATCH(request: NextRequest) {
       .set({ ...next, salePrice, updatedAt: new Date() })
       .where(eq(flashSaleOffers.id, current.id))
       .returning();
+    await invalidateCatalog();
     return NextResponse.json({ offer });
   } catch (error) {
     console.error(
@@ -270,6 +273,7 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'FLASH_SALE_HAS_ORDERS' }, { status: 409 });
     }
     await getDatabase().delete(flashSaleOffers).where(eq(flashSaleOffers.id, id));
+    await invalidateCatalog();
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error(

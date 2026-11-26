@@ -5,7 +5,6 @@ import { readFileSync } from 'node:fs';
 import { createClient, type RedisClientType } from 'redis';
 import { buildRedisUrl } from '@/lib/system-config-core';
 import { getSystemConfig } from './system-config';
-
 type RedisClient = RedisClientType;
 type RedisLease = {
   acquired: boolean;
@@ -97,8 +96,7 @@ export async function consumeRedisRateLimit(
 export async function acquireRedisLease(
   key: string,
   ttlMs: number,
-): Promise<RedisLease | null> {
-  const redis = await getConnectedClient();
+): Promise<RedisLease | null> {  const redis = await getConnectedClient();
   if (!redis) return null;
   const token = randomUUID();
   try {
@@ -128,4 +126,49 @@ export async function acquireRedisLease(
       }
     },
   };
+}
+
+// Small JSON cache in front of the read-heavy public endpoints. Every helper
+// returns null when Redis is unavailable, so callers fall back to the database
+// instead of failing: the cache must never be a new failure mode.
+export async function readRedisJson<T>(key: string): Promise<T | null> {
+  const redis = await getConnectedClient();
+  if (!redis) return null;
+  try {
+    const raw = await redis.get(key);
+    if (!raw) return null;
+    return JSON.parse(raw) as T;
+  } catch (error) {
+    console.error(
+      '[REDIS_CACHE_READ_FAILED]',
+      error instanceof Error ? error.message : 'Unknown Redis error',
+    );
+    return null;
+  }
+}
+
+export async function writeRedisJson(key: string, value: unknown, ttlSeconds: number) {
+  const redis = await getConnectedClient();
+  if (!redis) return;
+  try {
+    await redis.set(key, JSON.stringify(value), { EX: ttlSeconds });
+  } catch (error) {
+    console.error(
+      '[REDIS_CACHE_WRITE_FAILED]',
+      error instanceof Error ? error.message : 'Unknown Redis error',
+    );
+  }
+}
+
+export async function deleteRedisKeys(...keys: string[]) {
+  const redis = await getConnectedClient();
+  if (!redis || keys.length === 0) return;
+  try {
+    await redis.del(keys);
+  } catch (error) {
+    console.error(
+      '[REDIS_CACHE_INVALIDATE_FAILED]',
+      error instanceof Error ? error.message : 'Unknown Redis error',
+    );
+  }
 }

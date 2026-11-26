@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import { isAdministrator } from '@/lib/server/authorization';
+import { invalidateCatalog } from '@/lib/server/catalog-cache';
 import { getDatabase } from '@/lib/server/db/client';
 import { productProviderSettings, products } from '@/lib/server/db/schema';
 import type { ProductCategory } from '@/types/ppob';
@@ -192,6 +193,7 @@ export async function PUT(request: NextRequest) {
         .limit(1);
     });
 
+    await invalidateCatalog();
     return NextResponse.json({ settings: savedSettings });
   } catch (error) {
     console.error(

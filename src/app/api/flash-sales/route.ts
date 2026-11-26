@@ -3,6 +3,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { CatalogProduct } from '@/types/ppob';
 import { getAvailableFlashSale } from '@/lib/flash-sale';
 import { getAuth } from '@/lib/server/auth';
+import {
+  cacheFlashSales,
+  catalogCacheKeys,
+  flashSaleCacheTtlSeconds,
+  readCachedCatalog,
+} from '@/lib/server/catalog-cache';
 import { getDatabase } from '@/lib/server/db/client';
 import {
   flashSaleOffers,
@@ -22,8 +28,20 @@ function stripVendorCost(product: CatalogProduct) {
 export async function GET(request: NextRequest) {
   const now = new Date();
   try {
-    const [session, rows, providers] = await Promise.all([
-      getAuth().api.getSession({ headers: request.headers }),
+    const session = await getAuth().api.getSession({ headers: request.headers });
+    const isAgent = session?.user.role === 'agent';
+    const cacheKey = catalogCacheKeys.flashSales(isAgent ? 'agent' : 'public');
+    const cached = await readCachedCatalog<{ offers: unknown[] }>(cacheKey);
+    if (cached) {
+      return NextResponse.json(cached, {
+        headers: {
+          'Cache-Control': `private, max-age=10, stale-while-revalidate=${flashSaleCacheTtlSeconds}`,
+          'X-Catalog-Cache': 'hit',
+        },
+      });
+    }
+
+    const [rows, providers] = await Promise.all([
       getDatabase()
         .select({ offer: flashSaleOffers, product: products })
         .from(flashSaleOffers)
@@ -42,7 +60,6 @@ export async function GET(request: NextRequest) {
         provider,
       ]),
     );
-    const isAgent = session?.user.role === 'agent';
     const viewerRole = isAgent ? 'agent' : 'user';
     const offers = rows.flatMap(({ offer, product }) => {
       const available = getAvailableFlashSale(product, offer, now, viewerRole);
@@ -73,9 +90,17 @@ export async function GET(request: NextRequest) {
         product: isAgent ? catalogProduct : stripVendorCost(catalogProduct),
       }];
     });
+    const payload = { offers };
+    await cacheFlashSales(cacheKey, payload);
     return NextResponse.json(
-      { offers },
-      { headers: { 'Cache-Control': 'no-store' } },
+      payload,
+      {
+        headers: {
+          // private: agent rows carry agent pricing.
+          'Cache-Control': `private, max-age=10, stale-while-revalidate=${flashSaleCacheTtlSeconds}`,
+          'X-Catalog-Cache': 'miss',
+        },
+      },
     );
   } catch (error) {
     console.error(

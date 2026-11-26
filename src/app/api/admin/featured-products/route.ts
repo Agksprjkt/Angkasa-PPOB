@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { and, asc, eq } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import { isAdministrator } from '@/lib/server/authorization';
+import { invalidateCatalog } from '@/lib/server/catalog-cache';
 import { getDatabase } from '@/lib/server/db/client';
 import { featuredProducts, products } from '@/lib/server/db/schema';
 import type { ProductCategory } from '@/types/ppob';
@@ -87,6 +88,7 @@ export async function POST(request: NextRequest) {
       .insert(featuredProducts)
       .values({ id: randomUUID(), category, operator, sortOrder, enabled: true })
       .returning();
+    await invalidateCatalog();
     return NextResponse.json({ featured: created }, { status: 201 });
   } catch (error) {
     console.error('[ADMIN_FEATURED_CREATE_FAILED]', error);
@@ -132,6 +134,7 @@ export async function PATCH(request: NextRequest) {
     if (!updated) {
       return NextResponse.json({ error: 'FEATURED_NOT_FOUND' }, { status: 404 });
     }
+    await invalidateCatalog();
     return NextResponse.json({ featured: updated });
   } catch (error) {
     console.error('[ADMIN_FEATURED_UPDATE_FAILED]', error);
@@ -155,6 +158,7 @@ export async function DELETE(request: NextRequest) {
     if (!removed) {
       return NextResponse.json({ error: 'FEATURED_NOT_FOUND' }, { status: 404 });
     }
+    await invalidateCatalog();
     return NextResponse.json({ id: removed.id });
   } catch (error) {
     console.error('[ADMIN_FEATURED_DELETE_FAILED]', error);

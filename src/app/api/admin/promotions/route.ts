@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { asc, eq } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import { isAdministrator } from '@/lib/server/authorization';
+import { invalidateCatalog } from '@/lib/server/catalog-cache';
 import { getDatabase } from '@/lib/server/db/client';
 import { promotionalBanners } from '@/lib/server/db/schema';
 
@@ -155,6 +156,7 @@ export async function POST(request: NextRequest) {
       .insert(promotionalBanners)
       .values({ ...banner, id: randomUUID() })
       .returning();
+    await invalidateCatalog();
     return NextResponse.json({ banner: created }, { status: 201 });
   } catch (error) {
     console.error(
@@ -208,6 +210,7 @@ export async function PATCH(request: NextRequest) {
       .set({ ...merged, updatedAt: new Date() })
       .where(eq(promotionalBanners.id, current.id))
       .returning();
+    await invalidateCatalog();
     return NextResponse.json({ banner });
   } catch (error) {
     console.error(
@@ -229,9 +232,11 @@ export async function DELETE(request: NextRequest) {
       .delete(promotionalBanners)
       .where(eq(promotionalBanners.id, id))
       .returning({ id: promotionalBanners.id });
-    return deleted
-      ? NextResponse.json({ success: true })
-      : NextResponse.json({ error: 'PROMOTION_NOT_FOUND' }, { status: 404 });
+    if (!deleted) {
+      return NextResponse.json({ error: 'PROMOTION_NOT_FOUND' }, { status: 404 });
+    }
+    await invalidateCatalog();
+    return NextResponse.json({ success: true });
   } catch (error) {
     console.error(
       '[ADMIN_PROMOTION_DELETE_FAILED]',

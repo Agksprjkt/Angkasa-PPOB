@@ -3,6 +3,7 @@ import { asc, desc, eq, inArray, notInArray } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import type { Product, ProductCategory } from '@/types/ppob';
 import { isAdministrator } from '@/lib/server/authorization';
+import { invalidateCatalog } from '@/lib/server/catalog-cache';
 import { getDatabase } from '@/lib/server/db/client';
 import { productProviderSettings, products } from '@/lib/server/db/schema';
 import { getVendorRuntimeConfig } from '@/lib/server/integration-settings';
@@ -152,6 +153,7 @@ export async function POST(request: NextRequest) {
       .insert(products)
       .values({ ...payload, id: randomUUID() })
       .returning();
+    await invalidateCatalog();
     return NextResponse.json({ product }, { status: 201 });
   } catch (error) {
     console.error(
@@ -195,6 +197,7 @@ export async function PATCH(request: NextRequest) {
         .set({ status: parsed.input.status, updatedAt: new Date() })
         .where(inArray(products.id, parsed.input.ids))
         .returning();
+      await invalidateCatalog();
       return NextResponse.json({ products: updated });
     } catch (error) {
       console.error(
@@ -293,6 +296,7 @@ export async function PATCH(request: NextRequest) {
     if (!product) {
       return NextResponse.json({ error: 'PRODUCT_NOT_FOUND' }, { status: 404 });
     }
+    await invalidateCatalog();
     return NextResponse.json({ product });
   } catch (error) {
     console.error(
@@ -324,5 +328,6 @@ export async function DELETE(request: NextRequest) {
   if (!product) {
     return NextResponse.json({ error: 'PRODUCT_NOT_FOUND' }, { status: 404 });
   }
+  await invalidateCatalog();
   return NextResponse.json({ product });
 }

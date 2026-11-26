@@ -4,6 +4,12 @@ import { getAvailableFlashSale } from '@/lib/flash-sale';
 import { getAuth } from '@/lib/server/auth';
 import { getDatabase } from '@/lib/server/db/client';
 import {
+  cacheCatalog,
+  catalogCacheKeys,
+  catalogCacheTtlSeconds,
+  readCachedCatalog,
+} from '@/lib/server/catalog-cache';
+import {
   flashSaleOffers,
   productProviderSettings,
   products,
@@ -11,10 +17,49 @@ import {
 
 export const runtime = 'nodejs';
 
+// The whole active catalog is one payload; a burst of visitors would otherwise
+// become a burst of identical queries. Cached per role because agent prices are
+// part of the response.
 export async function GET(request: NextRequest) {
   try {
-    const session = await getAuth().api.getSession({ headers: request.headers });
+    // A visitor with no auth cookie cannot be an agent, so the public cache is
+    // safe to serve before paying for a session lookup. This is the common case:
+    // most catalog reads come from anonymous browsers.
+    const hasSessionCookie = Boolean(
+      request.cookies.get('better-auth.session_token')?.value ||
+      request.cookies.get('__Secure-better-auth.session_token')?.value,
+    );
+
+    if (!hasSessionCookie) {
+      const publicCached = await readCachedCatalog<{ products: unknown[] }>(
+        catalogCacheKeys.products('public'),
+      );
+      if (publicCached) {
+        return NextResponse.json(publicCached, {
+          headers: {
+            'Cache-Control': `private, max-age=30, stale-while-revalidate=${catalogCacheTtlSeconds}`,
+            'X-Catalog-Cache': 'hit-anonymous',
+          },
+        });
+      }
+    }
+
+    const session = hasSessionCookie
+      ? await getAuth().api.getSession({ headers: request.headers })
+      : null;
     const isAgent = session?.user.role === 'agent';
+    const cacheKey = catalogCacheKeys.products(isAgent ? 'agent' : 'public');
+
+    const cached = await readCachedCatalog<{ products: unknown[] }>(cacheKey);
+    if (cached) {
+      return NextResponse.json(cached, {
+        headers: {
+          'Cache-Control': `private, max-age=30, stale-while-revalidate=${catalogCacheTtlSeconds}`,
+          'X-Catalog-Cache': 'hit',
+        },
+      });
+    }
+
     const now = new Date();
     const [activeProducts, providers, flashSales] = await Promise.all([
       getDatabase()
@@ -59,7 +104,7 @@ export async function GET(request: NextRequest) {
       if (activeSale) saleByProduct.set(product.id, activeSale);
     }
 
-    return NextResponse.json({
+    const payload = {
       products: activeProducts.map((product) => {
         const provider = providerSettings.get(
           `${product.category}:${product.operator.toLocaleLowerCase('id-ID')}`,
@@ -90,6 +135,17 @@ export async function GET(request: NextRequest) {
         void basePrice;
         return publicProduct;
       }),
+    };
+
+    await cacheCatalog(cacheKey, payload);
+
+    return NextResponse.json(payload, {
+      headers: {
+        // private: the response differs by role through the session cookie, so a
+        // shared CDN copy would leak agent prices.
+        'Cache-Control': `private, max-age=30, stale-while-revalidate=${catalogCacheTtlSeconds}`,
+        'X-Catalog-Cache': 'miss',
+      },
     });
   } catch (error) {
     console.error(

@@ -10,6 +10,7 @@ import {
 import { fetchTokoVoucherProducts } from '@/lib/tokovoucher';
 import { tokoVoucherCategory } from '@/lib/tokovoucher-category';
 import { resolveVariant } from '@/lib/product-variant';
+import { invalidateCatalog } from '@/lib/server/catalog-cache';
 import { getDatabase } from '@/lib/server/db/client';
 import {
   productProviderSettings,
@@ -218,6 +219,7 @@ export async function runTokoVoucherProductSync(
           : { clearNextRunAt: true }),
         clearLastError: true,
       });
+      await invalidateCatalog();
       return { result };
     } catch (error) {
       const completedAt = new Date();
