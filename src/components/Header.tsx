@@ -258,9 +258,7 @@ export default function Header({
         ? 'Admin'
         : 'Pelanggan'
     : 'Belum masuk';
-  const controlClass = dark
-    ? 'liquid-glass-control text-slate-800 hover:text-slate-950'
-    : 'liquid-glass-control text-slate-700 hover:text-slate-950';
+  const controlClass = 'liquid-glass-control text-slate-800 hover:text-slate-950';
   const desktopNavButtonClass = (active = false) =>
     `flex min-h-10 items-center gap-2 px-2 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 ${
         dark
@@ -294,8 +292,8 @@ export default function Header({
               className="flex h-9 w-9 shrink-0 items-center justify-center text-slate-600 transition hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 md:hidden"
             >
               {mobileMenuOpen
-                ? <X className="h-4 w-4" aria-hidden="true" />
-                : <Menu className="h-4 w-4" aria-hidden="true" />}
+                ? <X className="h-[18px] w-[18px]" strokeWidth={2.25} aria-hidden="true" />
+                : <Menu className="h-[18px] w-[18px]" strokeWidth={2.25} aria-hidden="true" />}
             </button>
           )}
           {mobileBack && (
@@ -306,7 +304,7 @@ export default function Header({
               onClick={handleBack}
               className="flex h-9 w-9 shrink-0 items-center justify-center text-slate-600 transition hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
             >
-              <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+              <ArrowLeft className="h-[18px] w-[18px]" strokeWidth={2.25} aria-hidden="true" />
             </button>
           )}
           <Link
@@ -330,7 +328,7 @@ export default function Header({
           </Link>
         </div>
 
-        <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+        <div className="flex shrink-0 items-center gap-1 sm:gap-1.5">
           <button
             type="button"
             aria-label={theme === 'dark' ? 'Beralih ke mode terang' : 'Beralih ke mode gelap'}
@@ -340,8 +338,8 @@ export default function Header({
             className={`flex h-10 w-10 items-center justify-center rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 ${controlClass}`}
           >
             {theme === 'dark'
-              ? <Sun className="h-4 w-4" aria-hidden="true" />
-              : <Moon className="h-4 w-4" aria-hidden="true" />}
+              ? <Sun className="h-5 w-5" strokeWidth={2.25} aria-hidden="true" />
+              : <Moon className="h-5 w-5" strokeWidth={2.25} aria-hidden="true" />}
           </button>
           <div className="relative hidden lg:block">
             <button
@@ -359,8 +357,8 @@ export default function Header({
               className={`flex h-10 w-10 items-center justify-center rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 ${controlClass}`}
             >
               {isDesktopSearchOpen
-                ? <X className="h-4 w-4" aria-hidden="true" />
-                : <Search className="h-4 w-4" aria-hidden="true" />}
+                ? <X className="h-5 w-5" strokeWidth={2.25} aria-hidden="true" />
+                : <Search className="h-5 w-5" strokeWidth={2.25} aria-hidden="true" />}
             </button>
             <form
               onSubmit={handleProductSearch}
@@ -416,7 +414,7 @@ export default function Header({
             }}
             className={`flex h-10 w-10 items-center justify-center rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 lg:hidden ${controlClass}`}
           >
-            <Search className="h-4 w-4" aria-hidden="true" />
+            <Search className="h-5 w-5" strokeWidth={2.25} aria-hidden="true" />
           </button>
           <button
             type="button"
@@ -429,13 +427,13 @@ export default function Header({
               setIsDesktopSearchOpen(false);
               setIsNotificationsExpanded(false);
             }}
-            className={`liquid-glass-control-strong flex h-10 w-10 items-center justify-center overflow-hidden rounded-full text-xs font-bold transition focus-visible:outline-none focus-visible:ring-2 disabled:animate-pulse ${
+            className={`liquid-glass-control-strong flex h-10 w-10 items-center justify-center overflow-hidden rounded-full text-sm font-bold ring-1 ring-inset transition focus-visible:outline-none focus-visible:ring-2 disabled:animate-pulse ${
               dark
-                ? 'text-slate-900 focus-visible:ring-cyan-200'
-                : 'text-blue-800 focus-visible:ring-blue-600'
+                ? 'text-slate-900 ring-slate-700 focus-visible:ring-cyan-200'
+                : 'text-blue-800 ring-slate-200 focus-visible:ring-blue-600'
             }`}
           >
-            {currentUser ? getInitials(currentUser.name) : <UserRound className="h-4 w-4" aria-hidden="true" />}
+            {currentUser ? getInitials(currentUser.name) : <UserRound className="h-5 w-5" strokeWidth={2.25} aria-hidden="true" />}
           </button>
         </div>
 
