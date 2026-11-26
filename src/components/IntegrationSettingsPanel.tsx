@@ -178,9 +178,13 @@ const sectionSettings: Record<IntegrationSection, string[]> = {
 function IntegrationSummary({
   title,
   status,
+  actions,
 }: {
   title: string;
   status: VendorStatus;
+  // Rendered inside the summary so the switches stay reachable while the
+  // accordion is collapsed. Clicks are stopped so they never open or close it.
+  actions?: React.ReactNode;
 }) {
   const tone = status === 'active'
     ? 'rounded-md border border-emerald-200 bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800'
@@ -191,6 +195,20 @@ function IntegrationSummary({
     <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-5 [&::-webkit-details-marker]:hidden">
       <span className="font-semibold">{title}</span>
       <span className="flex items-center gap-3">
+        {actions && (
+          <span
+            className="flex items-center gap-3"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') event.stopPropagation();
+            }}
+          >
+            {actions}
+          </span>
+        )}
         <span className={tone}>{vendorStatusLabel(status)}</span>
         <ChevronDown
           aria-hidden="true"
@@ -507,6 +525,41 @@ export default function IntegrationSettingsPanel({
     }
   };
 
+  // The header switches sit outside the form, so "Tampil" has to save itself
+  // instead of waiting for the Simpan button inside the collapsed card.
+  const persistShowProducts = async (
+    vendor: 'digiflazz' | 'tokovoucher',
+    value: boolean,
+  ) => {
+    const name = vendor === 'digiflazz' ? 'digiflazzShowProducts' : 'tokovoucherShowProducts';
+    if (vendor === 'digiflazz') setDigiflazzShowProducts(value);
+    else setTokovoucherShowProducts(value);
+    try {
+      const response = await fetch('/api/admin/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: { [name]: String(value) } }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? 'Preferensi tampil gagal disimpan.');
+      addToast(
+        value ? 'Produk ditampilkan' : 'Produk disembunyikan',
+        value
+          ? 'Produk vendor ini muncul lagi di daftar produk dashboard.'
+          : 'Produk vendor ini disembunyikan dari daftar produk dashboard.',
+        'success',
+      );
+    } catch (error) {
+      if (vendor === 'digiflazz') setDigiflazzShowProducts(!value);
+      else setTokovoucherShowProducts(!value);
+      addToast(
+        'Preferensi gagal disimpan',
+        error instanceof Error ? error.message : 'Silakan coba kembali.',
+        'error',
+      );
+    }
+  };
+
   const copyWebhookUrl = async (url: string) => {
     try {
       await navigator.clipboard.writeText(url);
@@ -530,14 +583,55 @@ export default function IntegrationSettingsPanel({
     }
     if (section === 'digiflazz') {
       setDigiflazzEnabled(true);
+      void persistVendorEnabled('digiflazz', true);
     } else {
       setTokovoucherEnabled(true);
+      void persistVendorEnabled('tokovoucher', true);
+    }
+  };
+
+  // Header switches live outside the form, so "Aktif" also saves on its own.
+  const persistVendorEnabled = async (
+    vendor: 'digiflazz' | 'tokovoucher',
+    value: boolean,
+  ) => {
+    const name = vendor === 'digiflazz' ? 'digiflazzEnabled' : 'tokovoucherEnabled';
+    try {
+      const response = await fetch('/api/admin/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: { [name]: String(value) } }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? 'Status vendor gagal disimpan.');
+      await refreshSnapshot();
+      addToast(
+        value ? 'Vendor diaktifkan' : 'Vendor dinonaktifkan',
+        value
+          ? 'Pesanan baru ke vendor ini diterima lagi.'
+          : 'Pesanan baru ditolak; pesanan berjalan tetap diselesaikan.',
+        'success',
+      );
+    } catch (error) {
+      if (vendor === 'digiflazz') setDigiflazzEnabled(!value);
+      else setTokovoucherEnabled(!value);
+      addToast(
+        'Status vendor gagal disimpan',
+        error instanceof Error ? error.message : 'Silakan coba kembali.',
+        'error',
+      );
     }
   };
 
   const confirmVendorDisable = () => {
-    if (pendingDisable === 'digiflazz') setDigiflazzEnabled(false);
-    if (pendingDisable === 'tokovoucher') setTokovoucherEnabled(false);
+    if (pendingDisable === 'digiflazz') {
+      setDigiflazzEnabled(false);
+      void persistVendorEnabled('digiflazz', false);
+    }
+    if (pendingDisable === 'tokovoucher') {
+      setTokovoucherEnabled(false);
+      void persistVendorEnabled('tokovoucher', false);
+    }
     setPendingDisable(null);
   };
 
@@ -1091,7 +1185,32 @@ export default function IntegrationSettingsPanel({
 
       <Card>
         <details className="group">
-          <IntegrationSummary title="Digiflazz" status={digiflazzStatus} />
+          <IntegrationSummary
+            title="Digiflazz"
+            status={digiflazzStatus}
+            actions={
+              <>
+                <label className="flex items-center gap-1.5 text-[11px] font-medium text-slate-600">
+                  <span>Aktif</span>
+                  <Switch
+                    checked={digiflazzEnabled}
+                    disabled={!snapshot.digiflazz.enabledEditable}
+                    onCheckedChange={(value) => requestVendorToggle('digiflazz', value)}
+                    aria-label="Aktifkan vendor Digiflazz"
+                  />
+                </label>
+                <label className="flex items-center gap-1.5 text-[11px] font-medium text-slate-600">
+                  <span>Tampil</span>
+                  <Switch
+                    checked={digiflazzShowProducts}
+                    disabled={!snapshot.digiflazz.showProductsEditable}
+                    onCheckedChange={(value) => void persistShowProducts('digiflazz', value)}
+                    aria-label="Tampilkan produk Digiflazz di dashboard"
+                  />
+                </label>
+              </>
+            }
+          />
           <form
             onSubmit={handleSave('digiflazz')}
             className="space-y-5 border-t border-slate-200 p-5"
@@ -1272,35 +1391,19 @@ export default function IntegrationSettingsPanel({
           </div>
         </CardContent>
         <CardContent className="space-y-4 p-0">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <p className="text-sm font-medium text-slate-800">Aktifkan vendor</p>
-              <p className="text-xs text-slate-500">
-                Saat dimatikan, pesanan baru ditolak. Pesanan yang sudah berjalan tetap
-                diselesaikan.
-              </p>
-            </div>
-            <Switch
-              checked={digiflazzEnabled}
-              disabled={!snapshot.digiflazz.enabledEditable}
-              onCheckedChange={(value) => requestVendorToggle('digiflazz', value)}
-              aria-label="Aktifkan vendor Digiflazz"
-            />
+          <div className="rounded-lg border border-slate-200 p-3">
+            <p className="text-sm font-medium text-slate-800">Aktifkan vendor</p>
+            <p className="text-xs text-slate-500">
+              Saat dimatikan, pesanan baru ditolak. Pesanan yang sudah berjalan tetap
+              diselesaikan. Sakelarnya ada di judul kartu ini.
+            </p>
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <p className="text-sm font-medium text-slate-800">Tampilkan produk di dashboard</p>
-              <p className="text-xs text-slate-500">
-                Mematikan ini hanya menyembunyikan produk Digiflazz dari daftar produk di
-                dashboard. Katalog toko dan pesanan tidak terpengaruh.
-              </p>
-            </div>
-            <Switch
-              checked={digiflazzShowProducts}
-              disabled={!snapshot.digiflazz.showProductsEditable}
-              onCheckedChange={setDigiflazzShowProducts}
-              aria-label="Tampilkan produk Digiflazz di dashboard"
-            />
+          <div className="rounded-lg border border-slate-200 p-3">
+            <p className="text-sm font-medium text-slate-800">Tampilkan produk di dashboard</p>
+            <p className="text-xs text-slate-500">
+              Mematikan ini hanya menyembunyikan produk Digiflazz dari daftar produk di
+              dashboard. Katalog toko dan pesanan tidak terpengaruh.
+            </p>
           </div>
           <WebhookField
             id="digiflazz-webhook"
@@ -1335,7 +1438,32 @@ export default function IntegrationSettingsPanel({
 
       <Card>
         <details className="group">
-          <IntegrationSummary title="TokoVoucher" status={tokoVoucherStatus} />
+          <IntegrationSummary
+            title="TokoVoucher"
+            status={tokoVoucherStatus}
+            actions={
+              <>
+                <label className="flex items-center gap-1.5 text-[11px] font-medium text-slate-600">
+                  <span>Aktif</span>
+                  <Switch
+                    checked={tokovoucherEnabled}
+                    disabled={!snapshot.tokovoucher.enabledEditable}
+                    onCheckedChange={(value) => requestVendorToggle('tokovoucher', value)}
+                    aria-label="Aktifkan vendor TokoVoucher"
+                  />
+                </label>
+                <label className="flex items-center gap-1.5 text-[11px] font-medium text-slate-600">
+                  <span>Tampil</span>
+                  <Switch
+                    checked={tokovoucherShowProducts}
+                    disabled={!snapshot.tokovoucher.showProductsEditable}
+                    onCheckedChange={(value) => void persistShowProducts('tokovoucher', value)}
+                    aria-label="Tampilkan produk TokoVoucher di dashboard"
+                  />
+                </label>
+              </>
+            }
+          />
           <form
             onSubmit={handleSave('tokovoucher')}
             className="space-y-5 border-t border-slate-200 p-5"
@@ -1425,35 +1553,19 @@ export default function IntegrationSettingsPanel({
               </p>
             </CardContent>
             <CardContent className="space-y-4 p-0">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <p className="text-sm font-medium text-slate-800">Aktifkan vendor</p>
-              <p className="text-xs text-slate-500">
-                Saat dimatikan, pesanan baru ditolak. Pesanan yang sudah berjalan tetap
-                diselesaikan.
-              </p>
-            </div>
-            <Switch
-              checked={tokovoucherEnabled}
-              disabled={!snapshot.tokovoucher.enabledEditable}
-              onCheckedChange={(value) => requestVendorToggle('tokovoucher', value)}
-              aria-label="Aktifkan vendor TokoVoucher"
-            />
+          <div className="rounded-lg border border-slate-200 p-3">
+            <p className="text-sm font-medium text-slate-800">Aktifkan vendor</p>
+            <p className="text-xs text-slate-500">
+              Saat dimatikan, pesanan baru ditolak. Pesanan yang sudah berjalan tetap
+              diselesaikan. Sakelarnya ada di judul kartu ini.
+            </p>
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <p className="text-sm font-medium text-slate-800">Tampilkan produk di dashboard</p>
-              <p className="text-xs text-slate-500">
-                Mematikan ini hanya menyembunyikan produk TokoVoucher dari daftar produk di
-                dashboard. Katalog toko dan pesanan tidak terpengaruh.
-              </p>
-            </div>
-            <Switch
-              checked={tokovoucherShowProducts}
-              disabled={!snapshot.tokovoucher.showProductsEditable}
-              onCheckedChange={setTokovoucherShowProducts}
-              aria-label="Tampilkan produk TokoVoucher di dashboard"
-            />
+          <div className="rounded-lg border border-slate-200 p-3">
+            <p className="text-sm font-medium text-slate-800">Tampilkan produk di dashboard</p>
+            <p className="text-xs text-slate-500">
+              Mematikan ini hanya menyembunyikan produk TokoVoucher dari daftar produk di
+              dashboard. Katalog toko dan pesanan tidak terpengaruh.
+            </p>
           </div>
           <WebhookField
             id="tokovoucher-webhook"
