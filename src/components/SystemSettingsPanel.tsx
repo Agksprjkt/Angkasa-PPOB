@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { LoadingState } from '@/components/ui/crystal-loader';
 import { usePPOB } from '@/context/PPOBContext';
+import BackupCard from './system-settings/BackupCard';
 import DatabaseCard from './system-settings/DatabaseCard';
 import RedisCard from './system-settings/RedisCard';
 import StorageCard from './system-settings/StorageCard';
@@ -158,6 +159,12 @@ export default function SystemSettingsPanel() {
       <Card>
         <CardContent className="p-5">
           <StorefrontCard draft={draft} snapshot={snapshot} onChange={change} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="p-5">
+          <BackupCard addToast={addToast} />
         </CardContent>
       </Card>
 

@@ -31,6 +31,13 @@ const errorLabels: Record<string, string> = {
   NEON_NOT_CONFIGURED: 'Isi API key dan project ID Neon terlebih dahulu.',
   NEON_UNAUTHORIZED: 'API key Neon ditolak.',
   NEON_UNAVAILABLE: 'API Neon tidak dapat dihubungi.',
+  BACKUP_FAILED: 'Backup gagal dibuat.',
+  INVALID_BACKUP_FILE: 'File backup tidak valid.',
+  BACKUP_SCHEMA_MISMATCH: 'File backup berasal dari versi aplikasi yang berbeda.',
+  BACKUP_DIALECT_MISMATCH: 'File backup dibuat dari jenis database lain (SQLite vs PostgreSQL).',
+  BACKUP_FILE_TOO_LARGE: 'File backup melebihi 64 MB.',
+  RESTORE_NOT_CONFIRMED: 'Ketik RESTORE untuk mengonfirmasi.',
+  RESTORE_FAILED: 'Restore gagal dan tidak ada perubahan yang disimpan.',
 };
 
 export const errorText = (code: string) => errorLabels[code] ?? code;

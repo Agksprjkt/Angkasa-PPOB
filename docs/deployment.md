@@ -411,6 +411,29 @@ The `data.tar.gz` member restores into the `ppob-data` volume; mount it with a
 throwaway container the same way the backup script does. A backup that has never
 been restored is not a backup.
 
+### Backup and restore from the dashboard
+
+Admin > Pengaturan > Sistem has a **Backup & restore database** card. It writes
+every table (users, products, transactions, deposits, balance ledger, settings)
+into one gzipped JSON file and restores that file in a single transaction.
+
+```sh
+curl -fsS -b cookies.txt https://<domain>/api/admin/backup -o ppob-backup.json.gz
+```
+
+- The dump is dialect-tagged (`sqlite` or `postgres`) and rejected if it does not
+  match the running database or the current table/column set, so a file from a
+  different app version fails loudly instead of restoring partially.
+- Restore requires typing `RESTORE`, deletes every row first, then inserts in
+  foreign-key order. Nothing is committed unless the whole transaction succeeds.
+- The `session` table is restored too, so every admin is logged out afterwards.
+- It does **not** touch `.data/uploads`, `.env`, or `system-config.json`. File
+  uploads still need `backup.sh` above, and provider credentials still live in
+  `.env`/secrets.
+- Prefer the dashboard file for day-to-day snapshots, but keep the nightly
+  `backup.sh` archive as the off-site copy: the JSON file lives on the host you
+  are restoring, which is exactly the host that can be lost.
+
 The archive does not include `/opt/ppob/.env` or `/opt/ppob/secrets/`. Without
 `BETTER_AUTH_SECRET` the encrypted fields in `.data/system-config.json` cannot be
 decrypted, and without `secrets/postgres_password` the dump cannot be restored into
