@@ -7,10 +7,12 @@ import {
   getNextDigiflazzProductSyncAt,
   isDigiflazzProductSyncDue,
 } from '@/lib/digiflazz-product-sync-schedule';
+import { matchSubgroup, type CatalogRuleLike } from '@/lib/catalog-mapping';
 import { fetchDigiflazzPriceList } from '@/lib/digiflazz';
 import { parseDigiflazzPrice } from '@/lib/digiflazz-protocol';
 import { resolveVariant } from '@/lib/product-variant';
 import { invalidateCatalog } from '@/lib/server/catalog-cache';
+import { listCatalogRules } from '@/lib/server/catalog';
 import { getDatabase } from '@/lib/server/db/client';
 import {
   productProviderSettings,
@@ -64,7 +66,7 @@ export async function syncDigiflazzProducts(): Promise<DigiflazzAutoSyncResult> 
     throw new Error('DIGIFLAZZ_CREDENTIALS_NOT_CONFIGURED');
   }
 
-  const [remoteProducts, databaseProducts, providerSettings] = await Promise.all([
+  const [remoteProducts, databaseProducts, providerSettings, rules] = await Promise.all([
     fetchDigiflazzPriceList({
       username: config.username,
       apiKey: config.apiKey,
@@ -72,6 +74,7 @@ export async function syncDigiflazzProducts(): Promise<DigiflazzAutoSyncResult> 
     }),
     getDatabase().select().from(productTable),
     getDatabase().select().from(productProviderSettings),
+    listCatalogRules(),
   ]);
   const db = getDatabase();
   const existingProducts = new Map(
@@ -98,6 +101,8 @@ export async function syncDigiflazzProducts(): Promise<DigiflazzAutoSyncResult> 
     compareAtPrice: number | null;
     status: 'active' | 'inactive';
     vendor: 'Digiflazz';
+    subgroupId: string | null;
+    subgroupSource: 'rule' | 'manual';
   }>();
   let skipped = 0;
 
@@ -152,6 +157,20 @@ export async function syncDigiflazzProducts(): Promise<DigiflazzAutoSyncResult> 
       : existing?.status ?? 'inactive';
     const description = typeof source.desc === 'string' ? source.desc.slice(0, 1000) : '';
 
+    // Only a brand-new product is placed by the rules. An existing row keeps
+    // whatever the admin (or an earlier rule run) decided.
+    const mappedSubgroupId = existing
+      ? existing.subgroupId
+      : matchSubgroup(
+        {
+          name: name.trim(),
+          vendorCode,
+          operator: normalizedOperator,
+          vendor: 'Digiflazz',
+        },
+        rules as CatalogRuleLike[],
+      );
+
     synced.set(vendorCode, {
       id: existing?.id ?? randomUUID(),
       vendorCode,
@@ -166,6 +185,8 @@ export async function syncDigiflazzProducts(): Promise<DigiflazzAutoSyncResult> 
       compareAtPrice: existing?.compareAtPrice ?? null,
       status: productStatus,
       vendor: 'Digiflazz',
+      subgroupId: mappedSubgroupId,
+      subgroupSource: existing?.subgroupSource ?? 'rule',
     });
   }
 

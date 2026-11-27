@@ -118,7 +118,8 @@ export default function StorefrontSections() {
   const featuredProviders = useMemo(() => {
     const grouped = new Map<string, FeaturedProvider>();
     products
-      .filter((product) => product.status === 'active')
+      // Only products an admin placed in a storefront menu may be advertised.
+      .filter((product) => product.status === 'active' && product.subgroupId)
       .forEach((product) => {
         const key = `${product.category}:${product.operator.trim().toLocaleLowerCase('id-ID')}`;
         const price = role === 'agent'

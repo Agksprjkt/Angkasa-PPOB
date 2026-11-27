@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { gameRequiresServerZone } from '@/lib/order-input-validation';
+import { catalogAccent, catalogGroupIcon } from '@/lib/catalog-appearance';
 import {
   Smartphone,
   Wifi,
@@ -33,6 +34,10 @@ interface ProductCatalogProps {
   initialCategory?: ProductCategory;
   initialSearch?: string;
   initialOperator?: string;
+  // Storefront placement filter. When set, the catalog only sees products the
+  // admin mapped into that subgroup, and the category pills are hidden because
+  // the subgroup already decided the menu.
+  subgroupId?: string;
   onCategoryChange?: (category: ProductCategory) => void;
   onSelectProduct: (
     product: Product,
@@ -103,6 +108,16 @@ const categoryStyles: Record<ProductCategory, { active: string; icon: string }> 
   },
 };
 
+type CategoryPill = {
+  category: ProductCategory;
+  label: string;
+  icon: typeof Smartphone;
+  style: { active: string; icon: string };
+  groupSlug: string | null;
+  // Curated menu: show the admin's subgroups instead of provider cards.
+  curatedSubgroups: { id: string; slug: string; label: string; iconUrl: string | null }[];
+};
+
 function getGameProductGroup(product: Pick<Product, 'name' | 'description'>) {
   const text = `${product.name} ${product.description}`.toLocaleLowerCase('id-ID');
   if (text.includes('membership') || text.includes('member') || text.includes('pass')) {
@@ -117,13 +132,97 @@ export default function ProductCatalog({
   initialCategory = 'pulsa',
   initialSearch = '',
   initialOperator,
+  subgroupId,
   onCategoryChange,
   onSelectProduct,
 }: ProductCatalogProps) {
-  const { products, role, catalogPending } = usePPOB();
+  const { products: allProducts, role, catalogPending, catalogGroups, catalogSubgroups } = usePPOB();
   const router = useRouter();
 
-  const [activeCategory, setActiveCategory] = useState<ProductCategory>(initialCategory);
+  const [selectedCategory, setSelectedCategory] = useState<ProductCategory>(initialCategory);
+  // The category pills are the admin's catalog groups. A group that is not
+  // "include unmapped" is a curated menu: it shows its subgroups (PLN, PLN
+  // Promo, PDAM, …) instead of provider cards.
+  const categoryPills = useMemo<CategoryPill[]>(() => {
+    const pills: CategoryPill[] = [];
+    for (const group of [...catalogGroups].sort((a, b) => a.sortOrder - b.sortOrder)) {
+      if (!group.enabled || !group.productCategory) continue;
+      if (pills.some((pill) => pill.category === group.productCategory)) continue;
+      const curatedSubgroups = group.includeUnmapped
+        ? []
+        : catalogSubgroups
+          .filter((subgroup) => subgroup.groupId === group.id && subgroup.enabled)
+          .sort((a, b) => a.sortOrder - b.sortOrder)
+          .map((subgroup) => ({
+            id: subgroup.id,
+            slug: subgroup.slug,
+            label: subgroup.label,
+            iconUrl: subgroup.iconUrl,
+          }));
+      pills.push({
+        category: group.productCategory,
+        label: group.label,
+        icon: catalogGroupIcon(group.iconKey),
+        style: {
+          active: catalogAccent(group.accent).active,
+          icon: catalogAccent(group.accent).icon,
+        },
+        groupSlug: group.slug,
+        curatedSubgroups,
+      });
+    }
+    // Before the admin configures anything, the built-in order keeps the old
+    // storefront working.
+    return pills.length > 0
+      ? pills
+      : categoryOrder.map((category) => ({
+        category,
+        label: categoryLabels[category],
+        icon: categoryIcons[category],
+        style: categoryStyles[category],
+        groupSlug: null,
+        curatedSubgroups: [],
+      }));
+  }, [catalogGroups, catalogSubgroups]);
+
+  const activePill = categoryPills.find((pill) => pill.category === selectedCategory)
+    ?? categoryPills[0]
+    ?? null;
+
+  // The pill decides the category, so an admin renaming or reordering groups can
+  // never leave the panel pointing at a category that no longer has a pill.
+  const activeCategory = activePill?.category ?? selectedCategory;
+  const effectiveLabel = activePill?.label ?? categoryLabels[activeCategory];
+
+  // A subgroup is the storefront menu now, so it narrows the catalog before any
+  // other filter runs. On the homepage a curated category narrows to its own
+  // subgroups; a provider-style category keeps the whole vendor list.
+  const products = useMemo(() => {
+    if (subgroupId) return allProducts.filter((product) => product.subgroupId === subgroupId);
+    if (activePill && activePill.curatedSubgroups.length > 0) {
+      const ids = activePill.curatedSubgroups.map((subgroup) => subgroup.id);
+      return allProducts.filter((product) =>
+        product.subgroupId && ids.includes(product.subgroupId));
+    }
+    return allProducts;
+  }, [activePill, allProducts, subgroupId]);
+
+  // Curated categories list their subgroups as cards, with the product count and
+  // starting price computed from the mapped products.
+  const curatedCards = useMemo(() => {
+    if (!activePill || activePill.curatedSubgroups.length === 0) return null;
+    return activePill.curatedSubgroups.map((subgroup) => {
+      const mapped = products.filter((product) => product.subgroupId === subgroup.id);
+      let fromPrice: number | null = null;
+      for (const product of mapped) {
+        const price = role === 'agent'
+          ? product.sellPriceAgent ?? product.sellPriceUser
+          : product.sellPriceUser;
+        fromPrice = fromPrice === null ? price : Math.min(fromPrice, price);
+      }
+      return { ...subgroup, count: mapped.length, fromPrice };
+    }).filter((subgroup) => subgroup.count > 0);
+  }, [activePill, products, role]);
   const [destinationNumber, setDestinationNumber] = useState('');
   const [selectedOperator, setSelectedOperator] = useState<string>(initialOperator ?? 'All');
 
@@ -404,31 +503,32 @@ export default function ProductCatalog({
   if (view === 'browse') {
     return (
       <Card className="overflow-hidden border-slate-200/80 shadow-sm">
+        {!subgroupId && (
         <div className="border-b border-slate-200 bg-slate-50 p-3 sm:p-4">
           <div className="grid grid-cols-4 gap-2 text-center sm:grid-cols-4 lg:grid-cols-8">
-            {categoryOrder.map((category) => {
-              const Icon = categoryIcons[category];
-              const isActive = activeCategory === category;
+            {categoryPills.map((pill) => {
+              const Icon = pill.icon;
+              const isActive = activeCategory === pill.category;
               return (
                 <button
-                  key={category}
+                  key={`${pill.category}:${pill.label}`}
                   type="button"
                   onClick={() => {
-                    setActiveCategory(category);
+                    setSelectedCategory(pill.category);
                     setSelectedVariant('Semua');
-                    onCategoryChange?.(category);
+                    onCategoryChange?.(pill.category);
                   }}
                   aria-pressed={isActive}
                   className={`flex min-h-[68px] flex-col items-center justify-center gap-1.5 rounded-2xl border px-1.5 py-2 text-xs font-semibold transition-colors ${
                     isActive
-                      ? categoryStyles[category].active
+                      ? pill.style.active
                       : 'border-transparent bg-slate-50 text-slate-600 hover:bg-slate-100'
                   }`}
                 >
-                  <span className={`flex h-8 w-8 items-center justify-center ${categoryStyles[category].icon}`}>
+                  <span className={`flex h-8 w-8 items-center justify-center ${pill.style.icon}`}>
                     <Icon className="h-5 w-5" />
                   </span>
-                  <span>{categoryLabels[category]}</span>
+                  <span>{pill.label}</span>
                 </button>
               );
             })}
@@ -443,23 +543,26 @@ export default function ProductCatalog({
             </Link>
           </div>
         </div>
+        )}
 
         <CardContent className="p-4 sm:p-6">
           <div className="mb-4 flex items-end justify-between gap-3">
             <div>
               <h2 className="text-lg font-bold text-slate-900">
-                {activeCategory === 'game'
-                  ? 'Pilih Game'
-                  : activeCategory === 'pulsa'
-                    ? 'Pilih Operator'
-                    : `Pilih ${categoryLabels[activeCategory]}`}
+                {curatedCards
+                  ? `Pilih ${effectiveLabel}`
+                  : activeCategory === 'game'
+                    ? 'Pilih Game'
+                    : activeCategory === 'pulsa'
+                      ? 'Pilih Operator'
+                      : `Pilih ${effectiveLabel}`}
               </h2>
               <p className="mt-1 text-xs text-slate-500">
                 Pilih layanan untuk melihat produk dan melanjutkan pesanan.
               </p>
             </div>
             <span className="hidden rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 sm:inline-flex">
-              {providerCards.length} layanan
+              {(curatedCards?.length ?? providerCards.length)} layanan
             </span>
           </div>
 
@@ -479,6 +582,63 @@ export default function ProductCatalog({
                 </div>
               ))}
             </div>
+          ) : curatedCards ? (
+            curatedCards.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-5 py-12 text-center">
+                <HelpCircle className="mx-auto mb-2 h-8 w-8 text-slate-400" />
+                <p className="text-sm font-semibold text-slate-700">Layanan belum tersedia</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  Petakan produk ke subkategori {effectiveLabel} di dashboard admin.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                {curatedCards.map((subgroup) => {
+                  const Icon = activePill?.icon ?? Smartphone;
+                  return (
+                    <button
+                      key={subgroup.id}
+                      type="button"
+                      onClick={() => {
+                        router.push(
+                          `/katalog/${encodeURIComponent(activePill?.groupSlug ?? '')}/${encodeURIComponent(subgroup.slug)}`,
+                        );
+                      }}
+                      className="liquid-product-card group min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white/60 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-sky-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
+                    >
+                      <div className="product-well relative flex aspect-[1.45/1] items-center justify-center overflow-hidden bg-gradient-to-br from-sky-100 via-sky-50 to-slate-100">
+                        {subgroup.iconUrl ? (
+                          <div
+                            aria-hidden="true"
+                            className="absolute inset-0 bg-cover bg-center transition-transform duration-300 group-hover:scale-105"
+                            style={{ backgroundImage: `url("${subgroup.iconUrl}")` }}
+                          />
+                        ) : (
+                          <span className="flex h-14 w-14 items-center justify-center text-sky-700">
+                            <Icon className="h-7 w-7" />
+                          </span>
+                        )}
+                        <span className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-slate-950/45 to-transparent" />
+                        <span className="product-well-badge absolute bottom-2 left-2 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-semibold text-slate-700">
+                          {effectiveLabel}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 p-3">
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-bold text-slate-900">
+                            {subgroup.label}
+                          </span>
+                          <span className="mt-0.5 block text-[11px] text-slate-500">
+                            {subgroup.count} produk tersedia
+                          </span>
+                        </span>
+                        <ChevronRight className="h-4 w-4 shrink-0 text-slate-400 transition group-hover:translate-x-0.5 group-hover:text-sky-600" />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )
           ) : providerCards.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-5 py-12 text-center">
               <HelpCircle className="mx-auto mb-2 h-8 w-8 text-slate-400" />
@@ -501,8 +661,9 @@ export default function ProductCatalog({
                     key={`${activeCategory}:${operator}`}
                     type="button"
                     onClick={() => {
+                      const query = subgroupId ? `?subgroup=${encodeURIComponent(subgroupId)}` : '';
                       router.push(
-                        `/checkout/${encodeURIComponent(activeCategory)}/${encodeURIComponent(operator)}`,
+                        `/checkout/${encodeURIComponent(activeCategory)}/${encodeURIComponent(operator)}${query}`,
                       );
                     }}
                     className="liquid-product-card group min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white/60 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-sky-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500"
@@ -524,7 +685,7 @@ export default function ProductCatalog({
                       <span className="absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-slate-950/45 to-transparent" />
                       {activeCategory !== 'game' && (
                         <span className="product-well-badge absolute bottom-2 left-2 rounded-full bg-white/90 px-2 py-0.5 text-[10px] font-semibold text-slate-700">
-                          {categoryLabels[activeCategory]}
+                          {effectiveLabel}
                         </span>
                       )}
                     </div>
@@ -552,29 +713,29 @@ export default function ProductCatalog({
 
   return (
     <Card className="shadow-sm border-slate-200/80 overflow-hidden">
-      {view !== 'provider' && (
+      {view !== 'provider' && !subgroupId && (
       <div className="grid grid-cols-4 gap-2 border-b border-slate-200 bg-slate-50 p-3 text-center sm:grid-cols-4 lg:grid-cols-8">
-        {categoryOrder.map((category) => {
-          const Icon = categoryIcons[category];
-          const isActive = activeCategory === category;
+        {categoryPills.map((pill) => {
+          const Icon = pill.icon;
+          const isActive = activeCategory === pill.category;
           return (
             <button
-              key={category}
+              key={`${pill.category}:${pill.label}`}
               onClick={() => {
-                setActiveCategory(category);
+                setSelectedCategory(pill.category);
                 setSelectedOperator('All');
                 setSelectedVariant('Semua');
               }}
               className={`flex min-h-[68px] flex-col items-center justify-center gap-1.5 rounded-2xl border px-1.5 py-2 text-xs font-semibold transition-colors ${
                 isActive
-                  ? categoryStyles[category].active
+                  ? pill.style.active
                   : 'border-transparent bg-slate-50 text-slate-600 hover:bg-slate-100'
               }`}
             >
-              <span className={`flex h-8 w-8 items-center justify-center ${categoryStyles[category].icon}`}>
+              <span className={`flex h-8 w-8 items-center justify-center ${pill.style.icon}`}>
                 <Icon className="h-5 w-5" />
               </span>
-              <span>{categoryLabels[category]}</span>
+              <span>{pill.label}</span>
             </button>
           );
         })}

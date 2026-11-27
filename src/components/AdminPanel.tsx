@@ -30,6 +30,7 @@ import LegalDocumentsPanel from '@/components/LegalDocumentsPanel';
 import ProductManagementPanel, {
   type ProductAdminView,
 } from '@/components/ProductManagementPanel';
+import CatalogAdminPanel from '@/components/CatalogAdminPanel';
 import { calculateMarkup } from '@/lib/product-pricing';
 import {
   Activity,
@@ -70,6 +71,7 @@ import {
   FileText,
   Trash2,
   ExternalLink,
+  LayoutGrid,
 } from 'lucide-react';
 import { useDashboardControls } from '@/components/DashboardWorkspace';
 
@@ -267,6 +269,7 @@ export default function AdminPanel() {
     | 'metrics'
     | 'deposits'
     | 'products'
+    | 'catalog'
     | 'users'
     | 'settings'
     | 'transactions'
@@ -635,6 +638,7 @@ export default function AdminPanel() {
     | 'metrics'
     | 'deposits'
     | 'products'
+    | 'catalog'
     | 'users'
     | 'settings'
     | 'transactions'
@@ -901,6 +905,16 @@ export default function AdminPanel() {
                 }}
               />
             ))}
+            <SidebarNavButton
+              icon={LayoutGrid}
+              label="Katalog & Subkategori"
+              active={activeAdminTab === 'catalog'}
+              collapsed={isDesktopSidebarCollapsed}
+              onClick={() => {
+                setActiveAdminTab('catalog');
+                setIsMobileSidebarOpen(false);
+              }}
+            />
             <SidebarNavButton
               icon={Megaphone}
               label="Promosi"
@@ -1768,6 +1782,8 @@ export default function AdminPanel() {
           onToggleStatus={handleToggleProductStatus}
         />
       )}
+
+      {activeAdminTab === 'catalog' && <CatalogAdminPanel />}
 
       {/* TAB 5: PENGGUNA & CRUD USER */}
       {activeAdminTab === 'users' && (

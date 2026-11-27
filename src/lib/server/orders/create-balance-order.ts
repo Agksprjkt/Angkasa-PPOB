@@ -3,10 +3,14 @@ import 'server-only';
 import { and, eq, gte, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { createDigiflazzTransaction } from '@/lib/digiflazz';
+import { payDigiflazzBill } from '@/lib/digiflazz-postpaid';
 import { createOrderCode } from '@/lib/order-codes';
 import { getDatabase } from '@/lib/server/db/client';
 import {
   balanceLedger,
+  billInquiries,
+  catalogGroups,
+  catalogSubgroups,
   flashSaleReservations,
   products,
   transactions,
@@ -50,6 +54,8 @@ export type CreateBalanceOrderInput = {
   flashSaleOfferId?: string;
   flashSalePriceExpected?: number;
   voucherCode?: string;
+  // Required for a postpaid product: the bill this order was priced from.
+  billInquiryId?: string;
   user: {
     id: string;
     phoneNumber?: string | null;
@@ -127,6 +133,47 @@ export async function createBalanceOrder(
   if (!isOrderableVendor(product.vendor)) {
     return { status: 503, body: { error: 'PRODUCT_VENDOR_NOT_CONFIGURED' } };
   }
+
+  // A postpaid product is priced from an inquiry, never from the price list, so
+  // the order must carry one that is still open and belongs to this buyer.
+  let billInquiry: typeof billInquiries.$inferSelect | null = null;
+  if (product.subgroupId) {
+    const [placement] = await db
+      .select({ kind: catalogGroups.kind })
+      .from(catalogSubgroups)
+      .innerJoin(catalogGroups, eq(catalogSubgroups.groupId, catalogGroups.id))
+      .where(eq(catalogSubgroups.id, product.subgroupId))
+      .limit(1);
+    if (placement?.kind === 'postpaid') {
+      const inquiryId = input.billInquiryId?.trim();
+      if (!inquiryId) {
+        return { status: 400, body: { error: 'BILL_INQUIRY_REQUIRED' } };
+      }
+      const [inquiry] = await db
+        .select()
+        .from(billInquiries)
+        .where(eq(billInquiries.id, inquiryId))
+        .limit(1);
+      if (
+        !inquiry ||
+        inquiry.userId !== input.user.id ||
+        inquiry.productId !== product.id ||
+        inquiry.destination !== input.destination.trim()
+      ) {
+        return { status: 404, body: { error: 'BILL_INQUIRY_NOT_FOUND' } };
+      }
+      if (inquiry.status !== 'open') {
+        return { status: 409, body: { error: 'BILL_INQUIRY_ALREADY_USED' } };
+      }
+      if (inquiry.expiresAt.getTime() <= Date.now()) {
+        return { status: 409, body: { error: 'BILL_INQUIRY_EXPIRED' } };
+      }
+      billInquiry = inquiry;
+    }
+  }
+  if (billInquiry && product.vendor !== 'Digiflazz') {
+    return { status: 503, body: { error: 'BILL_PROVIDER_UNAVAILABLE' } };
+  }
   // Checked before any balance movement: a switched-off vendor must not take new
   // orders. Pending orders are settled elsewhere, so they keep working.
   if (!isVendorEnabled(product.vendor, await getVendorSwitchValues())) {
@@ -151,6 +198,7 @@ export async function createBalanceOrder(
         apiKey: '',
         mode: 'sandbox' as const,
         enableRealTransactions: false,
+        postpaidEnabled: false,
       };
     } else {
       vendorConfig = await getDigiflazzConfig();
@@ -192,15 +240,22 @@ export async function createBalanceOrder(
     }
   }
 
-  const regularPrice = input.user.role === 'agent'
-    ? product.sellPriceAgent
-    : product.sellPriceUser;
+  const regularPrice = billInquiry
+    ? billInquiry.totalAmount
+    : input.user.role === 'agent'
+      ? product.sellPriceAgent
+      : product.sellPriceUser;
   if (
     !Number.isSafeInteger(regularPrice) ||
     regularPrice <= 0 ||
     !Number.isSafeInteger(product.basePrice)
   ) {
     return { status: 503, body: { error: 'INVALID_PRODUCT_PRICE' } };
+  }
+  // A bill is a fixed amount the provider already quoted; promotions and vouchers
+  // would make the paid total differ from the bill.
+  if (billInquiry && (input.flashSaleOfferId || input.voucherCode)) {
+    return { status: 400, body: { error: 'PROMOTION_NOT_ALLOWED_FOR_BILL' } };
   }
   if (
     Boolean(input.flashSaleOfferId) !== (input.flashSalePriceExpected !== undefined) ||
@@ -339,11 +394,15 @@ export async function createBalanceOrder(
           operator: product.operator,
           destination,
           serverZoneId,
-          customerName: input.customerName,
+          customerName: billInquiry?.customerName || input.customerName,
           amount: orderPrice,
-          profit: orderPrice - product.basePrice,
+          // A bill's margin is the provider admin fee, not a price-list spread.
+          profit: billInquiry
+            ? Math.max(0, orderPrice - billInquiry.billAmount)
+            : orderPrice - product.basePrice,
           status: 'pending',
           paymentMethod: 'balance',
+          billInquiryId: billInquiry?.id ?? null,
           voucherCode,
           discountAmount,
           vendorResponse: {
@@ -411,6 +470,31 @@ export async function createBalanceOrder(
 
       const balanceAfter = updatedUsers[0].balance;
       const balanceBefore = balanceAfter + orderPrice;
+
+      // Mark the bill used inside the same transaction that charges the buyer, so
+      // two concurrent orders cannot pay one bill twice.
+      if (billInquiry) {
+        const [claimedInquiry] = await tx
+          .update(billInquiries)
+          .set({ status: 'used', updatedAt: new Date() })
+          .where(and(
+            eq(billInquiries.id, billInquiry.id),
+            eq(billInquiries.status, 'open'),
+          ))
+          .returning({ id: billInquiries.id });
+        if (!claimedInquiry) {
+          await tx
+            .update(users)
+            .set({
+              balance: sql`${users.balance} + ${orderPrice}`,
+              updatedAt: new Date(),
+            })
+            .where(eq(users.id, input.user.id));
+          await tx.delete(transactions).where(eq(transactions.id, inserted[0].id));
+          return { billAlreadyUsed: true as const };
+        }
+      }
+
       await tx.insert(balanceLedger).values({
         id: randomUUID(),
         idempotencyKey: `debit:${input.idempotencyKey}`,
@@ -455,6 +539,10 @@ export async function createBalanceOrder(
 
     if ('insufficientBalance' in result && result.insufficientBalance) {
       return { status: 409, body: { error: 'INSUFFICIENT_BALANCE' } };
+    }
+
+    if ('billAlreadyUsed' in result && result.billAlreadyUsed) {
+      return { status: 409, body: { error: 'BILL_INQUIRY_ALREADY_USED' } };
     }
 
     if ('flashSaleError' in result) {
@@ -519,6 +607,28 @@ export async function createBalanceOrder(
         vendorMessage = response.message;
         vendorCode = response.status;
         vendorSn = response.sn || null;
+      } else if (billInquiry) {
+        // A bill is paid against the inquiry the provider already quoted; a plain
+        // prepaid call would create a second, unpriced transaction.
+        const paid = await payDigiflazzBill(
+          { username: username ?? '', apiKey: apiKey ?? '', mode: mode === 'production' ? 'production' : 'sandbox' },
+          {
+            skuCode: product.vendorCode,
+            customerNo: destination,
+            refId: referenceId,
+            inquiryRefId: billInquiry.providerRef,
+          },
+        );
+        if (paid.refId !== referenceId) {
+          return {
+            status: 202,
+            body: { transaction: createdTransaction, error: 'VENDOR_RESPONSE_UNCLEAR' },
+          };
+        }
+        status = mapDigiflazzStatus(paid.status, paid.rc);
+        vendorMessage = paid.message;
+        vendorCode = paid.rc;
+        vendorSn = status === 'success' ? paid.sn : null;
       } else {
         const providerResponse: unknown = await createDigiflazzTransaction(
           { username: username ?? '', apiKey: apiKey ?? '', mode: mode === 'production' ? 'production' : 'sandbox' },

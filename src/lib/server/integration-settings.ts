@@ -52,6 +52,9 @@ const settingNames = [
   // without touching orders or the storefront catalogue.
   'digiflazzShowProducts',
   'tokovoucherShowProducts',
+  // Postpaid is a separate switch: enabling prepaid must never start paying real
+  // bills. Off by default.
+  'digiflazzPostpaidEnabled',
 ] as const;
 
 export type IntegrationSettingName = (typeof settingNames)[number];
@@ -108,6 +111,7 @@ export const integrationSettingEnvironmentNames: Record<
   tokovoucherWebhookSecret: 'TOKOVOUCHER_WEBHOOK_SECRET',
   digiflazzShowProducts: 'DIGIFLAZZ_SHOW_PRODUCTS',
   tokovoucherShowProducts: 'TOKOVOUCHER_SHOW_PRODUCTS',
+  digiflazzPostpaidEnabled: 'DIGIFLAZZ_POSTPAID_ENABLED',
 };
 
 export function isIntegrationSettingName(
@@ -304,10 +308,12 @@ export async function saveDigiflazzAutoSyncState(values: {
 export async function getDigiflazzConfig() {
   const { values } = await getIntegrationConfig();
   return {
-    username: values.digiflazzUsername,
-    apiKey: values.digiflazzApiKey,
+    username: values.digiflazzUsername ?? '',
+    apiKey: values.digiflazzApiKey ?? '',
     mode: values.digiflazzMode ?? 'sandbox',
     enableRealTransactions: values.enableRealTransactions === 'true',
+    // Paying a real bill moves real money, so this needs its own opt-in.
+    postpaidEnabled: values.digiflazzPostpaidEnabled === 'true',
   };
 }
 

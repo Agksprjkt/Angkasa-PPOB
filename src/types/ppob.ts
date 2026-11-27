@@ -3,6 +3,69 @@ export type UserRole = 'user' | 'agent' | 'admin';
 // Kept in sync with src/lib/vendor-registry.ts, which is the runtime source.
 export type ProductVendor = 'Digiflazz' | 'TokoVoucher' | 'Manual';
 
+// Storefront menus are admin-managed rows now; ProductCategory stays as the
+// vendor-side classification used for destination validation and routing.
+export type CatalogGroupKind = 'prepaid' | 'postpaid';
+
+export interface CatalogGroup {
+  id: string;
+  slug: string;
+  label: string;
+  iconKey: string;
+  accent: string;
+  kind: CatalogGroupKind;
+  // Vendor category this group draws from; null = only rule-mapped products.
+  productCategory?: ProductCategory | null;
+  // Provider-style group: list operators first, then their products.
+  includeUnmapped?: boolean;
+  sortOrder: number;
+  enabled: boolean;
+}
+
+export interface CatalogSubgroup {
+  id: string;
+  groupId: string;
+  slug: string;
+  label: string;
+  description: string;
+  iconUrl: string | null;
+  sortOrder: number;
+  enabled: boolean;
+}
+
+export type CatalogRuleMatchType = 'operator' | 'vendorCode' | 'prefix' | 'name';
+
+export interface CatalogRule {
+  id: string;
+  subgroupId: string;
+  priority: number;
+  vendor: ProductVendor | null;
+  matchType: CatalogRuleMatchType;
+  matchValue: string;
+}
+
+export type BillInquiryStatus = 'open' | 'used' | 'expired' | 'failed';
+
+export interface BillInquiryLine {
+  label: string;
+  value: string;
+}
+
+export interface BillInquiry {
+  id: string;
+  productId: string;
+  subgroupId: string | null;
+  destination: string;
+  customerName: string;
+  adminFee: number;
+  billAmount: number;
+  totalAmount: number;
+  providerRef: string;
+  lines: BillInquiryLine[];
+  status: BillInquiryStatus;
+  expiresAt: string;
+}
+
 export type ProductCategory =
   | 'pulsa'
   | 'data'
@@ -41,6 +104,11 @@ export interface Product {
   providerAlias?: string | null;
   status: 'active' | 'inactive';
   vendor: ProductVendor;
+  // Storefront placement. null = the product exists for admin/bookkeeping but is
+  // not shown in any storefront menu.
+  subgroupId?: string | null;
+  // manual = set by an admin, so rules and vendor sync leave it alone.
+  subgroupSource?: 'rule' | 'manual';
   // Storefront source marker, e.g. "Server 1". Empty = show the vendor name.
   vendorLabel?: string | null;
 }

@@ -10,6 +10,8 @@ import {
   readCachedCatalog,
 } from '@/lib/server/catalog-cache';
 import {
+  catalogGroups,
+  catalogSubgroups,
   flashSaleOffers,
   productProviderSettings,
   products,
@@ -61,7 +63,7 @@ export async function GET(request: NextRequest) {
     }
 
     const now = new Date();
-    const [activeProducts, providers, flashSales] = await Promise.all([
+    const [activeProducts, providers, flashSales, groups, subgroups] = await Promise.all([
       getDatabase()
       .select()
       .from(products)
@@ -78,6 +80,16 @@ export async function GET(request: NextRequest) {
           lte(flashSaleOffers.startsAt, now),
           gt(flashSaleOffers.endsAt, now),
         )),
+      getDatabase()
+        .select()
+        .from(catalogGroups)
+        .where(eq(catalogGroups.enabled, true))
+        .orderBy(asc(catalogGroups.sortOrder), asc(catalogGroups.label)),
+      getDatabase()
+        .select()
+        .from(catalogSubgroups)
+        .where(eq(catalogSubgroups.enabled, true))
+        .orderBy(asc(catalogSubgroups.sortOrder), asc(catalogSubgroups.label)),
     ]);
     const providerSettings = new Map(
       providers.map((provider) => [
@@ -105,6 +117,10 @@ export async function GET(request: NextRequest) {
     }
 
     const payload = {
+      // Storefront menus are admin rows now. Products carry subgroupId; a product
+      // with no subgroup is managed in the dashboard but hidden from the store.
+      groups,
+      subgroups,
       products: activeProducts.map((product) => {
         const provider = providerSettings.get(
           `${product.category}:${product.operator.toLocaleLowerCase('id-ID')}`,

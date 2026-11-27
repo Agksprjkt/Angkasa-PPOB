@@ -1,0 +1,1 @@
+ALTER TABLE `products` ADD `subgroupSource` text DEFAULT 'rule' NOT NULL;

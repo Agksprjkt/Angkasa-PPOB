@@ -11,7 +11,9 @@ import React, {
 } from 'react';
 import { authClient } from '@/lib/auth-client';
 import {
+  CatalogGroup,
   CatalogProduct,
+  CatalogSubgroup,
   Product,
   ProductCategory,
   Transaction,
@@ -59,11 +61,14 @@ interface PPOBContextType {
 
   // Products & CRUD
   products: CatalogProduct[];
+  catalogGroups: CatalogGroup[];
+  catalogSubgroups: CatalogSubgroup[];
   catalogPending: boolean;
   refreshProducts: () => Promise<void>;  refreshAdminUsers: () => Promise<void>;
   addProduct: (product: Omit<Product, 'id'>) => void;
   updateProduct: (id: string, updates: Partial<Product>) => Promise<boolean>;
   bulkUpdateProductStatus: (ids: string[], status: Product['status']) => Promise<boolean>;
+  bulkAssignSubgroup: (ids: string[], subgroupId: string | null) => Promise<boolean>;
   deleteProduct: (id: string) => void;
   applyBulkMarkup: (type: 'nominal' | 'percent', value: number, category?: ProductCategory) => void;
   syncDigiflazzPrices: () => Promise<void>;
@@ -90,6 +95,7 @@ interface PPOBContextType {
     serverZoneId?: string,
     transactionPin?: string,
     voucherCode?: string,
+    billInquiryId?: string,
   ) => Promise<{ success: boolean; transaction: Transaction; error?: string }>;
 
   // Deposits
@@ -117,6 +123,8 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
     userId: string | null;
     role: string;
     products: CatalogProduct[];
+    groups: CatalogGroup[];
+    subgroups: CatalogSubgroup[];
   } | null>(null);
   const [transactionHistory, setTransactionHistory] = useState<{
     userId: string;
@@ -207,6 +215,8 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
   );
   const catalogPending = authPending || !catalogReady;
   const products = catalogReady && catalog ? catalog.products : [];
+  const catalogGroups = catalogReady && catalog ? catalog.groups : [];
+  const catalogSubgroups = catalogReady && catalog ? catalog.subgroups : [];
   const transactionsReady = Boolean(
     sessionUserId && transactionHistory?.userId === sessionUserId,
   );
@@ -289,7 +299,12 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
       ? '/api/admin/products'
       : '/api/products';
     const response = await fetch(endpoint);
-    const result = await response.json() as { products?: CatalogProduct[]; error?: string };
+    const result = await response.json() as {
+      products?: CatalogProduct[];
+      groups?: CatalogGroup[];
+      subgroups?: CatalogSubgroup[];
+      error?: string;
+    };
     if (!response.ok || !Array.isArray(result.products)) {
       throw new Error(result.error ?? 'Katalog gagal dimuat ulang.');
     }
@@ -297,6 +312,8 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
       userId: sessionUserId,
       role: sessionRole,
       products: result.products,
+      groups: result.groups ?? [],
+      subgroups: result.subgroups ?? [],
     });
   }, [sessionRole, sessionUserId]);
 
@@ -309,7 +326,11 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
     void fetch(catalogEndpoint)
       .then(async (response) => {
         if (!response.ok) throw new Error('Katalog belum tersedia dari server.');
-        return (await response.json()) as { products: CatalogProduct[] };
+        return (await response.json()) as {
+          products: CatalogProduct[];
+          groups?: CatalogGroup[];
+          subgroups?: CatalogSubgroup[];
+        };
       })
       .then((result) => {
         if (active) {
@@ -317,6 +338,8 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
             userId: sessionUserId,
             role: sessionRole,
             products: result.products,
+            groups: result.groups ?? [],
+            subgroups: result.subgroups ?? [],
           });
         }
       })
@@ -325,7 +348,13 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
         const message =
           error instanceof Error ? error.message : 'Katalog gagal dimuat.';
         // Mark this session as settled so the skeleton does not spin forever.
-        setCatalog({ userId: sessionUserId, role: sessionRole, products: [] });
+        setCatalog({
+          userId: sessionUserId,
+          role: sessionRole,
+          products: [],
+          groups: [],
+          subgroups: [],
+        });
         addToast('Katalog Tidak Tersedia', message, 'warning');
       });
 
@@ -565,14 +594,17 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
     serverZoneId?: string,
     transactionPin?: string,
     voucherCode?: string,
+    billInquiryId?: string,
   ): Promise<{ success: boolean; transaction: Transaction; error?: string }> => {
     if (!currentUser) {
       throw new Error('Silakan login untuk membayar menggunakan saldo deposit.');
     }
 
     // A voucher changes the payable amount, so it must be part of the key: reusing
-    // the key of an unvouchered attempt would replay the old order.
-    const requestKey = `${currentUser.id}:${productId}:${destination}:${serverZoneId ?? ''}:${voucherCode ?? ''}`;
+    // the key of an unvouchered attempt would replay the old order. The bill
+    // inquiry is part of it for the same reason: a different bill is a different
+    // order.
+    const requestKey = `${currentUser.id}:${productId}:${destination}:${serverZoneId ?? ''}:${voucherCode ?? ''}:${billInquiryId ?? ''}`;
     let idempotencyKey = purchaseKeys.current.get(requestKey);
     if (!idempotencyKey) {
       idempotencyKey = crypto.randomUUID();
@@ -593,6 +625,7 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
         transactionPin,
         paymentMethod: 'balance',
         ...(voucherCode ? { voucherCode } : {}),
+        ...(billInquiryId ? { billInquiryId } : {}),
       }),
     });
 
@@ -857,6 +890,8 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
         setCatalog((previous) => ({
           userId: sessionUserId,
           role: sessionRole,
+          groups: previous?.groups ?? [],
+          subgroups: previous?.subgroups ?? [],
           products: [savedProduct, ...(previous?.products ?? [])],
         }));
         addToast('Produk Ditambahkan', `${savedProduct.name} tersimpan di database.`, 'success');
@@ -888,6 +923,8 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
       setCatalog((previous) => ({
         userId: sessionUserId,
         role: sessionRole,
+        groups: previous?.groups ?? [],
+        subgroups: previous?.subgroups ?? [],
         products: (previous?.products ?? []).map((product) =>
           product.id === id ? savedProduct : product,
         ),
@@ -932,6 +969,8 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
       setCatalog((previous) => ({
         userId: sessionUserId,
         role: sessionRole,
+        groups: previous?.groups ?? [],
+        subgroups: previous?.subgroups ?? [],
         products: (previous?.products ?? []).map((product) => saved.get(product.id) ?? product),
       }));
       addToast(
@@ -950,8 +989,53 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const deleteProduct = (id: string) => {
-    void fetch(`/api/admin/products?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
+  const bulkAssignSubgroup = async (
+    ids: string[],
+    subgroupId: string | null,
+  ): Promise<boolean> => {
+    if (ids.length === 0) return true;
+    const chunks: string[][] = [];
+    for (let index = 0; index < ids.length; index += 1000) {
+      chunks.push(ids.slice(index, index + 1000));
+    }
+    try {
+      const saved = new Map<string, Product>();
+      for (const chunk of chunks) {
+        const response = await fetch('/api/admin/products', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: chunk, subgroupId }),
+        });
+        const result = (await response.json()) as { products?: Product[]; error?: string };
+        if (!response.ok || !Array.isArray(result.products)) {
+          throw new Error(result.error ?? 'Subkategori produk gagal diperbarui.');
+        }
+        for (const product of result.products) saved.set(product.id, product);
+      }
+      setCatalog((previous) => ({
+        userId: sessionUserId,
+        role: sessionRole,
+        groups: previous?.groups ?? [],
+        subgroups: previous?.subgroups ?? [],
+        products: (previous?.products ?? []).map((product) => saved.get(product.id) ?? product),
+      }));
+      addToast(
+        'Subkategori diperbarui',
+        `${saved.size.toLocaleString('id-ID')} produk dipindahkan.`,
+        'success',
+      );
+      return true;
+    } catch (error) {
+      addToast(
+        'Subkategori gagal diperbarui',
+        error instanceof Error ? error.message : 'Terjadi kesalahan.',
+        'error',
+      );
+      return false;
+    }
+  };
+
+  const deleteProduct = (id: string) => {    void fetch(`/api/admin/products?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
       .then(async (response) => {
         const result = (await response.json()) as { product?: Product; error?: string };
         if (!response.ok || !result.product) {
@@ -961,6 +1045,8 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
         setCatalog((previous) => ({
           userId: sessionUserId,
           role: sessionRole,
+          groups: previous?.groups ?? [],
+          subgroups: previous?.subgroups ?? [],
           products: (previous?.products ?? []).map((product) =>
             product.id === id ? savedProduct : product,
           ),
@@ -1018,12 +1104,15 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
         balance,
         commissionBalance,
         products,
+        catalogGroups,
+        catalogSubgroups,
         catalogPending,
         refreshProducts,
     refreshAdminUsers,
         addProduct,
         updateProduct,
         bulkUpdateProductStatus,
+        bulkAssignSubgroup,
         deleteProduct,
         applyBulkMarkup,
         syncDigiflazzPrices,

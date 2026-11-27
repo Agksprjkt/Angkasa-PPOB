@@ -15,6 +15,10 @@ import {
   type PgTimestampBuilderInitial,
 } from 'drizzle-orm/pg-core';
 import type {
+  BillInquiryLine,
+  BillInquiryStatus,
+  CatalogGroupKind,
+  CatalogRuleMatchType,
   ProductCategory,
   TransactionStatus,
 } from '@/types/ppob';
@@ -134,6 +138,77 @@ export const verifications = pgTable('verification', {
   updatedAt: integer('updatedAt', { mode: 'timestamp_ms' }),
 });
 
+export const catalogGroups = pgTable(
+  'catalog_groups',
+  {
+    id: text('id').primaryKey(),
+    slug: text('slug').notNull().unique(),
+    label: text('label').notNull(),
+    // Icon and accent are keys resolved by the storefront, so an admin cannot
+    // break the UI with an arbitrary class or URL.
+    iconKey: text('iconKey').notNull().default('grid'),
+    accent: text('accent').notNull().default('sky'),
+    // prepaid = pick a nominal; postpaid = inquiry the bill first.
+    kind: text('kind').$type<CatalogGroupKind>().notNull().default('prepaid'),
+    // Vendor category this group draws from. Provider-style groups (game, data,
+    // pulsa) list operators instead of one flat nominal list.
+    productCategory: text('productCategory').$type<ProductCategory>(),
+    // When true, products of this category that no rule has mapped yet still
+    // appear here. Off by default: a vendor sync must not publish itself.
+    includeUnmapped: integer('includeUnmapped', { mode: 'boolean' }).notNull().default(false),
+    sortOrder: integer('sortOrder').notNull().default(0),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    index('catalog_groups_enabled_sort_idx').on(table.enabled, table.sortOrder),
+  ],
+);
+
+export const catalogSubgroups = pgTable(
+  'catalog_subgroups',
+  {
+    id: text('id').primaryKey(),
+    groupId: text('groupId')
+      .notNull()
+      .references(() => catalogGroups.id, { onDelete: 'cascade' }),
+    slug: text('slug').notNull(),
+    label: text('label').notNull(),
+    description: text('description').notNull().default(''),
+    iconUrl: text('iconUrl'),
+    sortOrder: integer('sortOrder').notNull().default(0),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    uniqueIndex('catalog_subgroups_group_slug_unique').on(table.groupId, table.slug),
+    index('catalog_subgroups_group_sort_idx').on(table.groupId, table.sortOrder),
+  ],
+);
+
+export const catalogRules = pgTable(
+  'catalog_rules',
+  {
+    id: text('id').primaryKey(),
+    subgroupId: text('subgroupId')
+      .notNull()
+      .references(() => catalogSubgroups.id, { onDelete: 'cascade' }),
+    // Lowest priority wins, so a narrow rule can be placed above a broad one.
+    priority: integer('priority').notNull().default(100),
+    vendor: text('vendor').$type<ProductVendor>(),
+    matchType: text('matchType').$type<CatalogRuleMatchType>().notNull(),
+    matchValue: text('matchValue').notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    index('catalog_rules_priority_idx').on(table.priority),
+    index('catalog_rules_subgroup_idx').on(table.subgroupId),
+  ],
+);
+
 export const products = pgTable(
   'products',
   {
@@ -156,6 +231,16 @@ export const products = pgTable(
     compareAtPrice: bigint('compareAtPrice'),
     status: text('status').$type<'active' | 'inactive'>().notNull().default('active'),
     vendor: text('vendor').$type<ProductVendor>().notNull(),
+    // Storefront placement. null means the product is synced and manageable but
+    // hidden from every storefront menu until an admin maps it.
+    subgroupId: text('subgroupId').references(() => catalogSubgroups.id, {
+      onDelete: 'set null',
+    }),
+    // An admin's placement must survive every later rule run and vendor sync.
+    subgroupSource: text('subgroupSource')
+      .$type<'rule' | 'manual'>()
+      .notNull()
+      .default('rule'),
     // Free-text source marker shown on the storefront, e.g. "Server 1". Empty
     // means the vendor name is used instead.
     vendorLabel: text('vendorLabel'),
@@ -169,6 +254,7 @@ export const products = pgTable(
     index('products_category_status_idx').on(table.category, table.status),
     index('products_variant_idx').on(table.category, table.operator, table.variant),
     index('products_vendor_status_idx').on(table.vendor, table.status),
+    index('products_subgroup_status_idx').on(table.subgroupId, table.status),
     check('products_prices_nonnegative', sql`
       ${table.basePrice} >= 0
       AND ${table.sellPriceUser} >= 0
@@ -329,6 +415,42 @@ export const invoices = pgTable(
   ],
 );
 
+export const billInquiries = pgTable(
+  'bill_inquiries',
+  {
+    id: text('id').primaryKey(),
+    userId: text('userId').references(() => users.id, { onDelete: 'cascade' }),
+    productId: text('productId')
+      .notNull()
+      .references(() => products.id, { onDelete: 'cascade' }),
+    subgroupId: text('subgroupId').references(() => catalogSubgroups.id, {
+      onDelete: 'set null',
+    }),
+    destination: text('destination').notNull(),
+    customerName: text('customerName').notNull().default(''),
+    adminFee: bigint('adminFee').notNull().default(0),
+    billAmount: bigint('billAmount').notNull().default(0),
+    totalAmount: bigint('totalAmount').notNull().default(0),
+    // Vendor reference for this inquiry; unique so a replayed callback cannot
+    // create a second payable bill.
+    providerRef: text('providerRef').notNull().unique(),
+    lines: jsonb('lines').$type<BillInquiryLine[]>().notNull().default([]),
+    status: text('status').$type<BillInquiryStatus>().notNull().default('open'),
+    expiresAt: integer('expiresAt', { mode: 'timestamp_ms' }).notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    index('bill_inquiries_user_status_idx').on(table.userId, table.status),
+    index('bill_inquiries_expiry_idx').on(table.expiresAt),
+    check('bill_inquiries_amounts_nonnegative', sql`
+      ${table.adminFee} >= 0
+      AND ${table.billAmount} >= 0
+      AND ${table.totalAmount} >= 0
+    `),
+  ],
+);
+
 export const transactions = pgTable(
   'transactions',
   {
@@ -336,6 +458,11 @@ export const transactions = pgTable(
     referenceId: text('referenceId').notNull().unique(),
     idempotencyKey: text('idempotencyKey').notNull().unique(),
     invoiceId: text('invoiceId').references(() => invoices.id, {
+      onDelete: 'set null',
+    }),
+    // Postpaid orders must point at the inquiry they were priced from, so one
+    // inquiry can only ever be paid once.
+    billInquiryId: text('billInquiryId').references(() => billInquiries.id, {
       onDelete: 'set null',
     }),
     userId: text('userId').references(() => users.id, { onDelete: 'set null' }),
@@ -385,6 +512,10 @@ export const transactions = pgTable(
   (table) => [
     index('transactions_user_created_idx').on(table.userId, table.createdAt),
     index('transactions_status_created_idx').on(table.status, table.createdAt),
+    // One inquiry, one paid order. Partial so many nulls stay allowed.
+    uniqueIndex('transactions_bill_inquiry_unique')
+      .on(table.billInquiryId)
+      .where(sql`${table.billInquiryId} IS NOT NULL`),
     check('transactions_amount_nonnegative', sql`${table.amount} >= 0`),
   ],
 );

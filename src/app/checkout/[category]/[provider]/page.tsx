@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { ArrowRight } from 'lucide-react';
 import ProductCatalog from '@/components/ProductCatalog';
 import DirectOrderModal from '@/components/DirectOrderModal';
@@ -47,6 +47,9 @@ export default function ProviderCheckoutPage() {
   const params = useParams<{ category: string; provider: string }>();
   const router = useRouter();
   const { products, role } = usePPOB();
+  // Arriving from a subgroup menu keeps the catalog scoped to that menu, so the
+  // buyer cannot wander into products the admin has not published there.
+  const subgroupId = useSearchParams().get('subgroup') ?? undefined;
   const category = categories.has(params.category as ProductCategory)
     ? params.category as ProductCategory
     : null;
@@ -152,6 +155,7 @@ export default function ProviderCheckoutPage() {
               <ProductCatalog
                 key={`${category}:${providerName}`}
                 view="provider"
+                subgroupId={subgroupId}
                 initialCategory={category}
                 initialOperator={providerName}
                 onSelectProduct={handleSelectProduct}

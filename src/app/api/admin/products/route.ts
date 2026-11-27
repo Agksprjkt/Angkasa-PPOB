@@ -5,9 +5,14 @@ import type { Product, ProductCategory } from '@/types/ppob';
 import { isAdministrator } from '@/lib/server/authorization';
 import { invalidateCatalog } from '@/lib/server/catalog-cache';
 import { getDatabase } from '@/lib/server/db/client';
-import { productProviderSettings, products } from '@/lib/server/db/schema';
+import {
+  catalogGroups,
+  catalogSubgroups,
+  productProviderSettings,
+  products,
+} from '@/lib/server/db/schema';
 import { getVendorRuntimeConfig } from '@/lib/server/integration-settings';
-import { parseBulkStatusInput } from '@/lib/product-bulk-update';
+import { parseBulkStatusInput, parseBulkSubgroupInput } from '@/lib/product-bulk-update';
 
 export const runtime = 'nodejs';
 
@@ -40,9 +45,13 @@ function isProduct(value: unknown): value is Omit<Product, 'id'> {
     'status',
     'vendor',
     'vendorLabel',
+    'subgroupId',
   ]);
   if (Object.keys(product).some((key) => !allowedFields.has(key))) return false;
   return (
+    (product.subgroupId === undefined ||
+      product.subgroupId === null ||
+      (typeof product.subgroupId === 'string' && product.subgroupId.length <= 128)) &&
     typeof product.vendorCode === 'string' &&
     product.vendorCode.trim().length > 0 &&
     product.vendorCode.length <= 100 &&
@@ -93,7 +102,7 @@ export async function GET(request: NextRequest) {
     const direction = request.nextUrl.searchParams.get('dir') === 'desc' ? 'desc' : 'asc';
     const sortColumn = sort === 'price' ? products.sellPriceUser : products.name;
     const db = getDatabase();
-    const [rows, providers] = await Promise.all([
+    const [rows, providers, groups, subgroups] = await Promise.all([
       db
         .select()
         .from(products)
@@ -106,6 +115,14 @@ export async function GET(request: NextRequest) {
           aliasOf: productProviderSettings.aliasOf,
         })
         .from(productProviderSettings),
+      db
+        .select()
+        .from(catalogGroups)
+        .orderBy(asc(catalogGroups.sortOrder), asc(catalogGroups.label)),
+      db
+        .select()
+        .from(catalogSubgroups)
+        .orderBy(asc(catalogSubgroups.sortOrder), asc(catalogSubgroups.label)),
     ]);
     // The panel needs the alias to merge two vendors into one provider row.
     const aliasByName = new Map(
@@ -117,6 +134,8 @@ export async function GET(request: NextRequest) {
         ]),
     );
     return NextResponse.json({
+      groups,
+      subgroups,
       products: rows.map((product) => ({
         ...product,
         providerAlias:
@@ -211,6 +230,43 @@ export async function PATCH(request: NextRequest) {
     }
   }
 
+  // Bulk placement: mapping a provider's whole list to a subgroup is one
+  // statement, and every row becomes manual so rules never undo it.
+  if (
+    typeof payload === 'object' &&
+    payload !== null &&
+    !Array.isArray(payload) &&
+    'subgroupId' in payload &&
+    'ids' in payload
+  ) {
+    const parsed = parseBulkSubgroupInput(payload);
+    if (!parsed.ok) {
+      return NextResponse.json({ error: parsed.error }, { status: 400 });
+    }
+    try {
+      const updated = await getDatabase()
+        .update(products)
+        .set({
+          subgroupId: parsed.input.subgroupId,
+          subgroupSource: 'manual',
+          updatedAt: new Date(),
+        })
+        .where(inArray(products.id, parsed.input.ids))
+        .returning();
+      await invalidateCatalog();
+      return NextResponse.json({ products: updated });
+    } catch (error) {
+      console.error(
+        '[ADMIN_PRODUCTS_BULK_SUBGROUP_FAILED]',
+        error instanceof Error ? error.message : 'Unknown database error',
+      );
+      return NextResponse.json(
+        { error: 'PRODUCT_COULD_NOT_BE_UPDATED' },
+        { status: 409 },
+      );
+    }
+  }
+
   if (
     typeof payload !== 'object' ||
     payload === null ||
@@ -251,6 +307,7 @@ export async function PATCH(request: NextRequest) {
       'status',
       'vendor',
       'vendorLabel',
+      'subgroupId',
     ]);
     const currentProduct = {
       vendorCode: existing.vendorCode,
@@ -266,6 +323,7 @@ export async function PATCH(request: NextRequest) {
       status: existing.status,
       vendor: existing.vendor,
       vendorLabel: existing.vendorLabel,
+      subgroupId: existing.subgroupId,
     };
     if (
       Object.keys(updates).length === 0 ||
@@ -288,9 +346,20 @@ export async function PATCH(request: NextRequest) {
         }
       : {};
 
+    // Any admin placement is manual, including "null = hide", so a later rule
+    // run or vendor sync cannot undo it.
+    const subgroupUpdate = 'subgroupId' in updates
+      ? {
+          subgroupId: typeof updates.subgroupId === 'string' && updates.subgroupId.trim()
+            ? updates.subgroupId.trim()
+            : null,
+          subgroupSource: 'manual' as const,
+        }
+      : {};
+
     const [product] = await db
       .update(products)
-      .set({ ...updates, ...variantUpdate, updatedAt: new Date() })
+      .set({ ...updates, ...variantUpdate, ...subgroupUpdate, updatedAt: new Date() })
       .where(eq(products.id, payload.id))
       .returning();
     if (!product) {

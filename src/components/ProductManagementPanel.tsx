@@ -101,7 +101,7 @@ function ProviderDetailPanel({
   onBack: () => void;
   onToggleStatus: (product: Product, status: Product['status']) => Promise<boolean>;
 }) {
-  const { refreshProducts, addToast, updateProduct, bulkUpdateProductStatus, products: catalogProducts } = usePPOB();
+  const { refreshProducts, addToast, updateProduct, bulkUpdateProductStatus, bulkAssignSubgroup, products: catalogProducts, catalogGroups, catalogSubgroups } = usePPOB();
   const [settings, setSettings] = useState<ProviderSettings>({
     description: '',
     iconUrl: null,
@@ -124,6 +124,7 @@ function ProviderDetailPanel({
   const [productDraft, setProductDraft] = useState<{
     variant: string;
     vendorLabel: string;
+    subgroupId: string;
     sellPriceUser: number;
     sellPriceAgent: number;
     compareAtPrice: number | null;
@@ -325,6 +326,7 @@ function ProviderDetailPanel({
     setProductDraft({
       variant: product.variant ?? '',
       vendorLabel: product.vendorLabel ?? '',
+      subgroupId: product.subgroupId ?? '',
       sellPriceUser: product.sellPriceUser,
       sellPriceAgent: product.sellPriceAgent,
       compareAtPrice: product.compareAtPrice ?? null,
@@ -342,6 +344,8 @@ function ProviderDetailPanel({
       const saved = await updateProduct(product.id, {
         variant: variant || null,
         vendorLabel: vendorLabel || null,
+        // Empty means "hide from the storefront", which is a deliberate choice.
+        subgroupId: productDraft.subgroupId || null,
         sellPriceUser: productDraft.sellPriceUser,
         sellPriceAgent: productDraft.sellPriceAgent,
         compareAtPrice: productDraft.compareAtPrice,
@@ -556,6 +560,48 @@ function ProviderDetailPanel({
             >
               Set Harga Otomatis
             </Button>
+            {catalogSubgroups.length > 0 && (
+              <select
+                aria-label={`Petakan semua produk ${group.operator} ke subkategori`}
+                defaultValue=""
+                disabled={pendingProductIds.size > 0}
+                onChange={async (event) => {
+                  const value = event.target.value;
+                  if (!value) return;
+                  const label = value === '__none__'
+                    ? 'Tidak tampil di toko'
+                    : catalogSubgroups.find((row) => row.id === value)?.label ?? 'subkategori';
+                  if (!window.confirm(
+                    `Petakan ${group.allProducts.length} produk ${group.operator} ke "${label}"? Pemetaan manual sebelumnya akan diganti.`,
+                  )) {
+                    event.target.value = '';
+                    return;
+                  }
+                  setPendingProductIds(new Set(group.allProducts.map((product) => product.id)));
+                  try {
+                    await bulkAssignSubgroup(
+                      group.allProducts.map((product) => product.id),
+                      value === '__none__' ? null : value,
+                    );
+                  } finally {
+                    setPendingProductIds(new Set());
+                    event.target.value = '';
+                  }
+                }}
+                className="h-9 rounded-md border border-slate-200 bg-white px-2 text-sm"
+              >
+                <option value="">Petakan semua ke…</option>
+                {catalogSubgroups.map((subgroup) => {
+                  const parent = catalogGroups.find((row) => row.id === subgroup.groupId);
+                  return (
+                    <option key={subgroup.id} value={subgroup.id}>
+                      {parent ? `${parent.label} · ${subgroup.label}` : subgroup.label}
+                    </option>
+                  );
+                })}
+                <option value="__none__">Tidak tampil di toko</option>
+              </select>
+            )}
           </div>
         </div>
         <div className="grid gap-4 border-b border-slate-100 bg-slate-50/60 p-4 lg:grid-cols-2">
@@ -708,12 +754,42 @@ function ProviderDetailPanel({
                               <span className="block text-[10px] text-slate-500">
                                 Kosongkan agar tipe diambil ulang dari sync vendor.
                               </span>
+                              <select
+                                aria-label={`Subkategori ${product.name}`}
+                                value={productDraft.subgroupId}
+                                onChange={(event) => setProductDraft((current) => current
+                                  ? { ...current, subgroupId: event.target.value }
+                                  : current)}
+                                className="h-8 w-44 rounded-md border border-slate-200 bg-white px-2 text-xs"
+                              >
+                                <option value="">Tidak tampil di toko</option>
+                                {catalogSubgroups.map((subgroup) => {
+                                  const parent = catalogGroups.find((row) => row.id === subgroup.groupId);
+                                  return (
+                                    <option key={subgroup.id} value={subgroup.id}>
+                                      {parent ? `${parent.label} · ${subgroup.label}` : subgroup.label}
+                                    </option>
+                                  );
+                                })}
+                              </select>
+                              <span className="block text-[10px] text-slate-500">
+                                Subkategori menentukan menu toko tempat produk ini tampil.
+                              </span>
                             </div>
                           ) : (
                             <div className="mt-1 flex flex-wrap items-center gap-1">
                               <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
                                 {vendorLabelOf(product)}
                               </span>
+                              {product.subgroupId ? (
+                                <span className="inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                                  {catalogSubgroups.find((row) => row.id === product.subgroupId)?.label ?? 'Subkategori'}
+                                </span>
+                              ) : (
+                                <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                                  Belum dipetakan
+                                </span>
+                              )}
                               {product.variant && (
                                 <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${
                                   product.variantSource === 'manual'

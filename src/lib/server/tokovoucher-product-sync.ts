@@ -7,10 +7,12 @@ import {
   getNextDigiflazzProductSyncAt,
   isDigiflazzProductSyncDue,
 } from '@/lib/digiflazz-product-sync-schedule';
+import { matchSubgroup, type CatalogRuleLike } from '@/lib/catalog-mapping';
 import { fetchTokoVoucherProducts } from '@/lib/tokovoucher';
 import { tokoVoucherCategory } from '@/lib/tokovoucher-category';
 import { resolveVariant } from '@/lib/product-variant';
 import { invalidateCatalog } from '@/lib/server/catalog-cache';
+import { listCatalogRules } from '@/lib/server/catalog';
 import { getDatabase } from '@/lib/server/db/client';
 import {
   productProviderSettings,
@@ -36,7 +38,7 @@ export async function syncTokoVoucherProducts(): Promise<DigiflazzAutoSyncResult
     throw new Error('TOKOVOUCHER_CREDENTIALS_NOT_CONFIGURED');
   }
 
-  const [remote, databaseProducts, providerSettings] = await Promise.all([
+  const [remote, databaseProducts, providerSettings, rules] = await Promise.all([
     fetchTokoVoucherProducts({
       memberCode: config.memberCode,
       secret: config.secret,
@@ -50,6 +52,7 @@ export async function syncTokoVoucherProducts(): Promise<DigiflazzAutoSyncResult
       .from(productTable)
       .where(eq(productTable.vendor, 'TokoVoucher')),
     getDatabase().select().from(productProviderSettings),
+    listCatalogRules(),
   ]);
 
   const db = getDatabase();
@@ -104,6 +107,15 @@ export async function syncTokoVoucherProducts(): Promise<DigiflazzAutoSyncResult
       ? existing?.status ?? 'inactive'
       : 'inactive';
 
+    // Only a brand-new product is placed by the rules. An existing row keeps
+    // whatever the admin (or an earlier rule run) decided.
+    const mappedSubgroupId = existing
+      ? existing.subgroupId
+      : matchSubgroup(
+        { name: source.name, vendorCode: source.code, operator, vendor: 'TokoVoucher' },
+        rules as CatalogRuleLike[],
+      );
+
     synced.set(source.code, {
       id: existing?.id ?? randomUUID(),
       vendorCode: source.code,
@@ -119,6 +131,8 @@ export async function syncTokoVoucherProducts(): Promise<DigiflazzAutoSyncResult
       status: productStatus,
       vendor: 'TokoVoucher',
       vendorLabel: existing?.vendorLabel ?? null,
+      subgroupId: mappedSubgroupId,
+      subgroupSource: existing?.subgroupSource ?? 'rule',
     });
   }
 
