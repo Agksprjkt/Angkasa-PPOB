@@ -3,6 +3,23 @@ export type UserRole = 'user' | 'agent' | 'admin';
 // Kept in sync with src/lib/vendor-registry.ts, which is the runtime source.
 export type ProductVendor = 'Digiflazz' | 'TokoVoucher' | 'Manual';
 
+// Postpaid vendors quote a bill first; the order then pays that quote.
+export interface BillInquiry {
+  id: string;
+  productId: string;
+  vendor: ProductVendor;
+  destination: string;
+  customerName: string;
+  billAmount: number;
+  adminFee: number;
+  totalAmount: number;
+  lines: { label: string; value: string }[];
+  periods: string[];
+  dueDate: string | null;
+  status: 'open' | 'used' | 'expired' | 'failed';
+  expiresAt: string;
+}
+
 export type ProductCategory =
   | 'pulsa'
   | 'data'

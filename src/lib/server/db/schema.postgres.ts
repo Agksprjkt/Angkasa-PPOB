@@ -329,6 +329,48 @@ export const invoices = pgTable(
   ],
 );
 
+// A postpaid bill is quoted once and paid shortly after, so the quote is stored
+// with the provider reference that the payment must reuse.
+export const billInquiries = pgTable(
+  'bill_inquiries',
+  {
+    id: text('id').primaryKey(),
+    userId: text('userId').references(() => users.id, { onDelete: 'cascade' }),
+    productId: text('productId')
+      .notNull()
+      .references(() => products.id, { onDelete: 'cascade' }),
+    vendor: text('vendor').$type<ProductVendor>().notNull(),
+    destination: text('destination').notNull(),
+    customerName: text('customerName').notNull().default(''),
+    // Bill value without the admin fee; totalAmount is what the buyer pays.
+    billAmount: bigint('billAmount').notNull().default(0),
+    adminFee: bigint('adminFee').notNull().default(0),
+    totalAmount: bigint('totalAmount').notNull().default(0),
+    // ref_id: the payment call must send this exact value.
+    providerRef: text('providerRef').notNull().unique(),
+    providerTrxId: text('providerTrxId'),
+    lines: jsonb('lines').$type<{ label: string; value: string }[]>().notNull(),
+    periods: jsonb('periods').$type<string[]>().notNull(),
+    dueDate: text('dueDate'),
+    status: text('status')
+      .$type<'open' | 'used' | 'expired' | 'failed'>()
+      .notNull()
+      .default('open'),
+    expiresAt: integer('expiresAt', { mode: 'timestamp_ms' }).notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    index('bill_inquiries_user_status_idx').on(table.userId, table.status),
+    index('bill_inquiries_expiry_idx').on(table.expiresAt),
+    check('bill_inquiries_amounts_nonnegative', sql`
+      ${table.billAmount} >= 0
+      AND ${table.adminFee} >= 0
+      AND ${table.totalAmount} >= 0
+    `),
+  ],
+);
+
 export const transactions = pgTable(
   'transactions',
   {
@@ -336,6 +378,10 @@ export const transactions = pgTable(
     referenceId: text('referenceId').notNull().unique(),
     idempotencyKey: text('idempotencyKey').notNull().unique(),
     invoiceId: text('invoiceId').references(() => invoices.id, {
+      onDelete: 'set null',
+    }),
+    // Postpaid orders point at the inquiry they were priced from.
+    billInquiryId: text('billInquiryId').references(() => billInquiries.id, {
       onDelete: 'set null',
     }),
     userId: text('userId').references(() => users.id, { onDelete: 'set null' }),
@@ -385,6 +431,10 @@ export const transactions = pgTable(
   (table) => [
     index('transactions_user_created_idx').on(table.userId, table.createdAt),
     index('transactions_status_created_idx').on(table.status, table.createdAt),
+    // One bill, one paid order. Partial so the many null rows stay allowed.
+    uniqueIndex('transactions_bill_inquiry_unique')
+      .on(table.billInquiryId)
+      .where(sql`${table.billInquiryId} IS NOT NULL`),
     check('transactions_amount_nonnegative', sql`${table.amount} >= 0`),
   ],
 );

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Product, ProductCategory } from '@/types/ppob';
 import { vendorLabelOf } from '@/lib/vendor-registry';
-import { providerGroupKey, resolveProviderName } from '@/lib/provider-alias';
+import { providerGroupKey, resolveProviderName, sameProviderName } from '@/lib/provider-alias';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -92,16 +92,69 @@ interface ProviderSettings {
 
 function ProviderDetailPanel({
   group,
-  products,
+  allProducts,
   onBack,
   onToggleStatus,
 }: {
   group: ProviderGroup;
-  products: Product[];
+  allProducts: Product[];
   onBack: () => void;
   onToggleStatus: (product: Product, status: Product['status']) => Promise<boolean>;
 }) {
-  const { refreshProducts, addToast, updateProduct, bulkUpdateProductStatus, products: catalogProducts } = usePPOB();
+  const { refreshProducts, addToast, updateProduct, bulkUpdateProductStatus } = usePPOB();
+  const sourceOperators = useMemo(() => {
+    const sources = new Map<string, {
+      operator: string;
+      vendors: Product['vendor'][];
+      products: Product[];
+    }>();
+    for (const product of group.allProducts) {
+      const operator = product.operator.trim();
+      const key = operator.toLocaleLowerCase('id-ID');
+      const source = sources.get(key);
+      if (source) {
+        source.products.push(product);
+        if (!source.vendors.includes(product.vendor)) source.vendors.push(product.vendor);
+      } else {
+        sources.set(key, {
+          operator,
+          vendors: [product.vendor],
+          products: [product],
+        });
+      }
+    }
+    return [...sources.values()].sort((a, b) => a.operator.localeCompare(b.operator, 'id'));
+  }, [group.allProducts]);
+  const defaultSourceOperator =
+    sourceOperators.find((source) => sameProviderName(source.operator, group.operator))?.operator ??
+    sourceOperators[0]?.operator ??
+    group.operator;
+  const [selectedSourceOperator, setSelectedSourceOperator] = useState(defaultSourceOperator);
+  const [selectedVendor, setSelectedVendor] = useState<'all' | Product['vendor']>('all');
+  const sourceProducts = useMemo(
+    () => group.allProducts.filter((product) =>
+      sameProviderName(product.operator, selectedSourceOperator),
+    ),
+    [group.allProducts, selectedSourceOperator],
+  );
+  const statusProducts = useMemo(
+    () => sourceProducts.filter((product) =>
+      selectedVendor === 'all' || product.vendor === selectedVendor,
+    ),
+    [selectedVendor, sourceProducts],
+  );
+  const selectedSource = sourceOperators.find((source) =>
+    sameProviderName(source.operator, selectedSourceOperator),
+  );
+  const setSourceVendorFilter = (value: string) => {
+    if (value === 'all') {
+      setSelectedVendor('all');
+    } else {
+      const vendor = selectedSource?.vendors.find((option) => option === value);
+      if (vendor) setSelectedVendor(vendor);
+    }
+    setProductPage(0);
+  };
   const [settings, setSettings] = useState<ProviderSettings>({
     description: '',
     iconUrl: null,
@@ -116,7 +169,8 @@ function ProviderDetailPanel({
   const [productPage, setProductPage] = useState(0);
   const [sortBy, setSortBy] = useState<'name' | 'price'>('name');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
-  const [isLoadingSettings, setIsLoadingSettings] = useState(true);
+  const [loadedSettingsKey, setLoadedSettingsKey] = useState('');
+  const [settingsError, setSettingsError] = useState<{ key: string; message: string } | null>(null);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [isUploading, setIsUploading] = useState<'icon' | 'cover' | null>(null);
   const [pendingProductIds, setPendingProductIds] = useState<Set<string>>(() => new Set());
@@ -130,9 +184,16 @@ function ProviderDetailPanel({
     status: Product['status'];
   } | null>(null);
 
+  const currentSettingsKey = `${group.category}:${selectedSourceOperator}`;
+  const isLoadingSettings = loadedSettingsKey !== currentSettingsKey;
+  const settingsLoadError = settingsError?.key === currentSettingsKey ? settingsError.message : '';
+
   useEffect(() => {
     let active = true;
-    const params = new URLSearchParams({ category: group.category, operator: group.operator });
+    const params = new URLSearchParams({
+      category: group.category,
+      operator: selectedSourceOperator,
+    });
     void fetch(`/api/admin/product-providers?${params}`)
       .then(async (response) => {
         const body = await response.json();
@@ -140,24 +201,28 @@ function ProviderDetailPanel({
         return body.settings as ProviderSettings;
       })
       .then((result) => {
-        if (active) setSettings(result);
+        if (active) {
+          setSettings(result);
+          setSettingsError(null);
+          setLoadedSettingsKey(currentSettingsKey);
+        }
       })
       .catch((error: unknown) => {
         if (active) {
-          addToast('Pengaturan provider gagal dimuat', error instanceof Error ? error.message : 'Silakan coba lagi.', 'error');
+          const message = error instanceof Error ? error.message : 'Silakan coba lagi.';
+          setSettingsError({ key: currentSettingsKey, message });
+          setLoadedSettingsKey(currentSettingsKey);
+          addToast('Pengaturan provider gagal dimuat', message, 'error');
         }
-      })
-      .finally(() => {
-        if (active) setIsLoadingSettings(false);
       });
     return () => {
       active = false;
     };
-  }, [addToast, group.category, group.operator]);
+  }, [addToast, currentSettingsKey, group.category, selectedSourceOperator]);
 
   const filteredProducts = useMemo(() => {
     const search = query.trim().toLocaleLowerCase('id-ID');
-    const matched = products.filter((product) =>
+    const matched = statusProducts.filter((product) =>
       !search ||
       product.name.toLocaleLowerCase('id-ID').includes(search) ||
       product.vendorCode.toLocaleLowerCase('id-ID').includes(search) ||
@@ -172,24 +237,31 @@ function ProviderDetailPanel({
       }
       return a.name.localeCompare(b.name, 'id') * direction;
     });
-  }, [products, query, sortBy, sortDirection]);
-  const allActive = group.allProducts.every((product) => product.status === 'active');
-  const activeCount = group.allProducts.filter((product) => product.status === 'active').length;
-  const totalCount = group.allProducts.length;
+  }, [statusProducts, query, sortBy, sortDirection]);
+  const allActive = statusProducts.length > 0 &&
+    statusProducts.every((product) => product.status === 'active');
+  const activeCount = statusProducts.filter((product) => product.status === 'active').length;
+  const statusTotalCount = statusProducts.length;
+  const totalCount = sourceProducts.length;
 
-  // Operators in the same category are the only valid merge targets, and the
-  // list is small because it is deduplicated by name.
+  // Only names from this category can be selected as storefront merge targets.
   const aliasOptions = useMemo(() => {
     const names = new Set<string>();
-    for (const product of catalogProducts) {
+    for (const product of allProducts) {
       if (product.category !== group.category) continue;
       const name = product.operator.trim();
-      if (name && name.toLocaleLowerCase('id-ID') !== group.operator.toLocaleLowerCase('id-ID')) {
+      if (name && !sameProviderName(name, selectedSourceOperator)) {
         names.add(name);
       }
     }
+    if (group.operator && !sameProviderName(group.operator, selectedSourceOperator)) {
+      names.add(group.operator);
+    }
+    if (settings.aliasOf && !sameProviderName(settings.aliasOf, selectedSourceOperator)) {
+      names.add(settings.aliasOf.trim());
+    }
     return [...names].sort((a, b) => a.localeCompare(b, 'id'));
-  }, [catalogProducts, group.category, group.operator]);
+  }, [allProducts, group.category, group.operator, selectedSourceOperator, settings.aliasOf]);
 
   // A TokoVoucher provider can hold 600+ rows; rendering them all made the
   // panel crawl, so the table pages through them.
@@ -200,6 +272,21 @@ function ProviderDetailPanel({
     currentProductPage * productsPerPage,
     currentProductPage * productsPerPage + productsPerPage,
   );
+  const storefrontOperator = !isLoadingSettings && !settingsLoadError && settings.aliasOf?.trim()
+    ? settings.aliasOf.trim()
+    : selectedSourceOperator;
+  const previewProducts = allProducts.filter((product) => {
+    if (product.category !== group.category || product.status !== 'active') return false;
+    const mappedOperator = sameProviderName(product.operator, selectedSourceOperator)
+      ? storefrontOperator
+      : resolveProviderName(product.operator, product.providerAlias);
+    return sameProviderName(mappedOperator, storefrontOperator);
+  });
+  const previewVendorSummary = [...new Set(previewProducts.map((product) => product.vendor))]
+    .map((vendor) => ({
+      vendor,
+      count: previewProducts.filter((product) => product.vendor === vendor).length,
+    }));
 
   const saveSettings = async (applyPrices: boolean) => {
     setIsSavingSettings(true);
@@ -209,7 +296,7 @@ function ProviderDetailPanel({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           category: group.category,
-          operator: group.operator,
+          operator: selectedSourceOperator,
           ...settings,
           applyPrices,
         }),
@@ -219,20 +306,18 @@ function ProviderDetailPanel({
       addToast(
         applyPrices ? 'Harga otomatis diterapkan' : 'Informasi provider disimpan',
         applyPrices
-          ? `Harga jual ${totalCount} produk ${group.operator} telah diperbarui.`
-          : `Informasi ${categoryLabels[group.category]} ${group.operator} berhasil disimpan.`,
+          ? `Harga jual ${totalCount} produk ${selectedSourceOperator} telah diperbarui.`
+          : `Informasi ${categoryLabels[group.category]} ${selectedSourceOperator} berhasil disimpan.`,
         'success',
       );
-      if (applyPrices) {
-        try {
-          await refreshProducts();
-        } catch (error) {
-          addToast(
-            'Daftar harga belum diperbarui',
-            error instanceof Error ? error.message : 'Muat ulang dashboard untuk melihat harga terbaru.',
-            'warning',
-          );
-        }
+      try {
+        await refreshProducts();
+      } catch (error) {
+        addToast(
+          'Katalog belum diperbarui',
+          error instanceof Error ? error.message : 'Muat ulang dashboard untuk melihat perubahan etalase.',
+          'warning',
+        );
       }
     } catch (error) {
       addToast(
@@ -251,7 +336,7 @@ function ProviderDetailPanel({
     try {
       const form = new FormData();
       form.set('category', group.category);
-      form.set('operator', group.operator);
+      form.set('operator', selectedSourceOperator);
       form.set('kind', kind);
       form.set('file', file);
       const response = await fetch('/api/admin/product-providers/assets', {
@@ -295,7 +380,7 @@ function ProviderDetailPanel({
     try {
       const params = new URLSearchParams({
         category: group.category,
-        operator: group.operator,
+        operator: selectedSourceOperator,
         kind,
       });
       const response = await fetch(`/api/admin/product-providers/assets?${params}`, {
@@ -362,11 +447,11 @@ function ProviderDetailPanel({
 
   const toggleGroupStatus = async () => {
     const nextStatus = allActive ? 'inactive' : 'active';
-    const pendingIds = group.allProducts
+    const pendingIds = statusProducts
       .filter((product) => product.status !== nextStatus)
       .map((product) => product.id);
     if (pendingIds.length === 0) return;
-    setPendingProductIds(new Set(group.allProducts.map((product) => product.id)));
+    setPendingProductIds(new Set(statusProducts.map((product) => product.id)));
     try {
       await bulkUpdateProductStatus(pendingIds, nextStatus);
     } finally {
@@ -382,8 +467,88 @@ function ProviderDetailPanel({
         className="inline-flex items-center gap-2 text-lg font-semibold text-slate-900 hover:text-sky-700"
       >
         <ArrowLeft aria-hidden="true" className="h-5 w-5" />
-        {categoryLabels[group.category]} {group.operator}
+        Kembali ke {categoryLabels[group.category]} {group.operator}
       </button>
+
+      <section className="grid gap-4 rounded-xl border border-border border-l-4 border-l-sky-500 bg-card p-4 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+        <div className="space-y-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+              Pratinjau etalase · {categoryLabels[group.category]}
+            </p>
+            <h2 className="mt-1 text-lg font-semibold text-slate-950">{storefrontOperator}</h2>
+            <p className="mt-1 text-sm text-slate-600">
+              {previewProducts.length} produk aktif akan tampil dalam kelompok ini.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {previewVendorSummary.map(({ vendor, count }) => (
+              <span
+                key={vendor}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-muted px-2.5 py-1.5 text-xs text-slate-700"
+              >
+                <span className="font-semibold">{vendor}</span>
+                <span className="text-slate-500">{count} produk tampil</span>
+              </span>
+            ))}
+          </div>
+          {previewProducts.length > 0 ? (
+            <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
+              {previewProducts.slice(0, 4).map((product) => (
+                <li key={product.id}>
+                  {product.name} <span className="text-slate-400">· {vendorLabelOf(product)}</span>
+                </li>
+              ))}
+              {previewProducts.length > 4 && (
+                <li className="font-medium text-slate-700">+{previewProducts.length - 4} produk lain</li>
+              )}
+            </ul>
+          ) : (
+            <p className="text-xs text-slate-500">Belum ada produk yang akan tampil di etalase.</p>
+          )}
+        </div>
+
+        <div className="space-y-2 border-t border-border pt-3 lg:border-l lg:border-t-0 lg:pl-4 lg:pt-0">
+          <div>
+            <p className="text-sm font-semibold text-slate-900">Pilih sumber operator</p>
+            <p className="mt-0.5 text-xs text-slate-600">
+              Atur nama etalase dan produk aktif per sumber; provider lain tidak ikut berubah.
+            </p>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+            {sourceOperators.map((source) => {
+              const sourceActiveCount = source.products.filter((product) => product.status === 'active').length;
+              const isSelected = sameProviderName(source.operator, selectedSourceOperator);
+              return (
+                <button
+                  key={source.operator}
+                  type="button"
+                  aria-pressed={isSelected}
+                  onClick={() => {
+                    setSelectedSourceOperator(source.operator);
+                    setSelectedVendor('all');
+                    setProductPage(0);
+                    setQuery('');
+                  }}
+                  className={`flex min-h-11 items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-600 ${
+                    isSelected
+                      ? 'border-sky-500 bg-muted text-slate-950'
+                      : 'border-border bg-card text-slate-700 hover:border-sky-400 hover:bg-muted'
+                  }`}
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium">{source.operator}</span>
+                    <span className="block truncate text-[11px] text-slate-500">{source.vendors.join(' · ')}</span>
+                  </span>
+                  <span className="shrink-0 text-xs tabular-nums text-slate-500">
+                    {sourceActiveCount}/{source.products.length} tampil
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </section>
 
       <details open className="rounded-xl border border-slate-200 bg-white">
         <summary className="cursor-pointer list-none border-b border-slate-200 px-4 py-3 font-semibold [&::-webkit-details-marker]:hidden">
@@ -453,39 +618,61 @@ function ProviderDetailPanel({
           </div>
           <div className="space-y-1.5">
             <label htmlFor="provider-alias" className="text-sm font-medium text-slate-700">
-              Gabung ke operator
+              Nama operator di etalase
             </label>
-            <input
+            <select
               id="provider-alias"
-              list="provider-alias-options"
-              maxLength={200}
-              value={settings.aliasOf ?? ''}
+              value={storefrontOperator}
+              disabled={isLoadingSettings || isSavingSettings || Boolean(settingsLoadError)}
               onChange={(event) => setSettings((current) => ({
                 ...current,
-                aliasOf: event.target.value,
+                aliasOf: sameProviderName(event.target.value, selectedSourceOperator)
+                  ? null
+                  : event.target.value,
               }))}
-              placeholder="Kosongkan bila tampil terpisah"
-              className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 sm:max-w-sm"
-            />
-            <datalist id="provider-alias-options">
+              className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 sm:max-w-md"
+            >
+              <option value={selectedSourceOperator}>
+                {selectedSourceOperator} (nama asli)
+              </option>
               {aliasOptions.map((name) => (
-                <option key={name} value={name} />
+                <option key={name} value={name}>{name}</option>
               ))}
-            </datalist>
+            </select>
             <p className="text-xs text-slate-500">
-              Isi nama operator lain di kategori ini bila kedua vendor menjual layanan yang sama,
-              misalnya DATA AXIS digabung ke AXIS. Kartu toko dan halaman checkout akan memakai satu
-              nama dengan produk dari kedua vendor.
+              Sumber: <span className="font-medium text-slate-700">{selectedSourceOperator}</span>
+              {selectedSource && ` · ${selectedSource.vendors.join(' / ')}`}. Pilih nama yang sama
+              untuk menggabungkan operator hanya di kategori ini. Produk tiap vendor tetap terpisah.
             </p>
           </div>
+          {settingsLoadError && (
+            <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              Pengaturan sumber ini tidak tersedia. Coba muat ulang sebelum menyimpan perubahan.
+            </p>
+          )}
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <span className="text-sm font-medium text-slate-700">Status</span>
+              <span className="text-sm font-medium text-slate-700">
+                Tampil di etalase{selectedVendor !== 'all' ? ` · ${selectedVendor}` : ''}
+              </span>
+              {selectedSource && selectedSource.vendors.length > 1 && (
+                <select
+                  aria-label="Pilih vendor untuk status etalase"
+                  value={selectedVendor}
+                  onChange={(event) => setSourceVendorFilter(event.target.value)}
+                  className="h-8 rounded-md border border-slate-200 bg-white px-2 text-xs"
+                >
+                  <option value="all">Semua vendor</option>
+                  {selectedSource.vendors.map((vendor) => (
+                    <option key={vendor} value={vendor}>{vendor}</option>
+                  ))}
+                </select>
+              )}
               <button
                 type="button"
                 role="switch"
                 aria-checked={allActive}
-                aria-label={`${allActive ? 'Nonaktifkan' : 'Aktifkan'} seluruh provider`}
+                aria-label={`${allActive ? 'Sembunyikan' : 'Tampilkan'} semua produk ${selectedSourceOperator}${selectedVendor !== 'all' ? ` dari ${selectedVendor}` : ''} di etalase`}
                 disabled={pendingProductIds.size > 0}
                 onClick={() => void toggleGroupStatus()}
                 className={`inline-flex h-6 w-11 items-center rounded-full p-0.5 transition-colors ${
@@ -496,9 +683,13 @@ function ProviderDetailPanel({
                   activeCount ? 'translate-x-5' : ''
                 }`} />
               </button>
-              <span className="text-sm text-slate-700">{allActive ? 'Aktif' : activeCount ? `Sebagian aktif (${activeCount}/${totalCount})` : 'Nonaktif'}</span>
+              <span className="text-sm text-slate-700">{allActive ? 'Semua tampil' : activeCount ? `Sebagian tampil (${activeCount}/${statusTotalCount})` : 'Tidak tampil'}</span>
             </div>
-            <Button type="button" onClick={() => void saveSettings(false)} disabled={isLoadingSettings || isSavingSettings}>
+            <Button
+              type="button"
+              onClick={() => void saveSettings(false)}
+              disabled={isLoadingSettings || isSavingSettings || Boolean(settingsLoadError)}
+            >
               {isSavingSettings ? 'Menyimpan…' : 'Simpan Informasi'}
             </Button>
           </div>
@@ -508,7 +699,7 @@ function ProviderDetailPanel({
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white">
         <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="font-semibold text-slate-900">Daftar Produk ({products.length})</h2>
+            <h2 className="font-semibold text-slate-900">Daftar Produk ({statusProducts.length})</h2>
             <p className="text-xs text-slate-500">Pilih Edit untuk mengubah ikon, harga, markup, harga coret, dan status produk langsung di baris.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -552,7 +743,7 @@ function ProviderDetailPanel({
               size="sm"
               variant="outline"
               onClick={() => void saveSettings(true)}
-              disabled={isLoadingSettings || isSavingSettings}
+              disabled={isLoadingSettings || isSavingSettings || Boolean(settingsLoadError)}
             >
               Set Harga Otomatis
             </Button>
@@ -621,7 +812,7 @@ function ProviderDetailPanel({
                 <th className="px-4 py-3 text-right">Harga jual</th>
                 <th className="px-4 py-3 text-right">Harga coret</th>
                 <th className="px-4 py-3 text-right">Harga member</th>
-                <th className="px-4 py-3 text-center">Status</th>
+                <th className="px-4 py-3 text-center">Tampil di etalase</th>
                 <th className="px-4 py-3 text-right">Aksi</th>
               </tr>
             </thead>
@@ -834,7 +1025,7 @@ function ProviderDetailPanel({
                           type="button"
                           role="switch"
                           aria-checked={productDraft.status === 'active'}
-                          aria-label={`${productDraft.status === 'active' ? 'Nonaktifkan' : 'Aktifkan'} ${product.name}`}
+                          aria-label={`${productDraft.status === 'active' ? 'Sembunyikan' : 'Tampilkan'} ${product.name} di etalase`}
                           disabled={pending}
                           onClick={() => setProductDraft((current) => current
                             ? { ...current, status: current.status === 'active' ? 'inactive' : 'active' }
@@ -1154,12 +1345,18 @@ export default function ProductManagementPanel({
 
   const details = viewDetails[view];
   const selectedGroup = providerGroups.find((group) => group.key === selectedGroupKey);
+  const selectedGroupSourceKey = selectedGroup
+    ? `${selectedGroup.key}:${[...new Set(
+      selectedGroup.allProducts.map((product) => product.operator.toLocaleLowerCase('id-ID')),
+    )].sort().join('|')}`
+    : null;
 
   if (selectedGroup && view !== 'pricing') {
     return (
       <ProviderDetailPanel
+        key={selectedGroupSourceKey}
         group={selectedGroup}
-        products={selectedGroup.allProducts}
+        allProducts={products}
         onBack={() => setSelectedGroupKey(null)}
         onToggleStatus={onToggleStatus}
       />
@@ -1168,6 +1365,37 @@ export default function ProductManagementPanel({
 
   return (
     <div className="space-y-5">
+      <Card className="border-border bg-card">
+        <CardContent className="space-y-3 p-4">
+          <div>
+            <p className="text-sm font-semibold text-slate-900">Atur produk yang masuk etalase</p>
+            <p className="mt-1 text-xs leading-relaxed text-slate-600">
+              Sinkronisasi menambahkan produk sebagai nonaktif. Pilih kategori dan vendor, buka operator,
+              samakan nama etalase untuk layanan yang sama, lalu aktifkan hanya produk yang ingin dijual.
+              Kedua vendor boleh tampil bersama; sumber penawaran tetap ditandai.
+            </p>
+          </div>
+          <div className="grid gap-2 text-xs sm:grid-cols-3">
+            <div className="rounded-lg border border-border bg-muted p-3">
+              <span className="font-semibold text-slate-700">1 · Pilih sumber</span>
+              <p className="mt-1 text-slate-600">Filter Digiflazz, TokoVoucher, atau semua vendor.</p>
+            </div>
+            <div className="rounded-lg border border-border bg-muted p-3">
+              <span className="font-semibold text-slate-700">2 · Petakan nama</span>
+              <p className="mt-1 text-slate-600">Gabungkan nama operator dalam kategori yang sama.</p>
+            </div>
+            <div className="rounded-lg border border-border bg-muted p-3">
+              <span className="font-semibold text-slate-700">3 · Pilih isi etalase</span>
+              <p className="mt-1 text-slate-600">Aktifkan produk per sumber; produk aktif dapat dibeli.</p>
+            </div>
+          </div>
+          <p className="text-[11px] text-slate-500">
+            Di Integrasi, “Aktif” mengatur pemakaian vendor dan “Tampil” mengatur visibilitas di dashboard admin.
+            Status produk aktif di sini yang menentukan produk tampil dan dapat dibeli di etalase.
+          </p>
+        </CardContent>
+      </Card>
+
       <div className="grid gap-3 sm:grid-cols-3">
         {([
           ['Total produk', counts.all, 'text-slate-950'],
@@ -1329,7 +1557,7 @@ export default function ProductManagementPanel({
                       <th className="px-4 py-3 text-right">Harga Member</th>
                       <th className="px-4 py-3 text-right">Markup Member</th>
                       <th className="px-4 py-3 text-right">Harga Coret</th>
-                      <th className="px-4 py-3 text-center">Status</th>
+                      <th className="px-4 py-3 text-center">Etalase</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -1422,7 +1650,7 @@ export default function ProductManagementPanel({
                 <div className="grid grid-cols-[minmax(0,1fr)_5rem_4rem] items-center gap-3 bg-slate-50 px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500 sm:grid-cols-[3rem_minmax(0,1fr)_7rem_5rem]">
                   <span>#</span>
                   <span>Produk / Provider</span>
-                  <span className="text-center">Status</span>
+                  <span className="text-center">Tampil</span>
                   <span className="text-center">Aksi</span>
                 </div>
                 {pagedGroups.map((group, index) => {
@@ -1449,7 +1677,11 @@ export default function ProductManagementPanel({
                               {activeCount > 0 && activeCount < group.allProducts.length
                                 ? ` · ${activeCount} aktif`
                                 : ''}
-                              {group.vendors.length > 1 ? ` · ${group.vendors.join(' · ')}` : ''}
+                              {group.vendors.map((vendor) => {
+                                const vendorProducts = group.allProducts.filter((product) => product.vendor === vendor);
+                                const vendorActiveCount = vendorProducts.filter((product) => product.status === 'active').length;
+                                return ` · ${vendor} ${vendorActiveCount}/${vendorProducts.length} tampil`;
+                              }).join('')}
                             </p>
                           </div>
                         </div>
@@ -1458,7 +1690,7 @@ export default function ProductManagementPanel({
                             type="button"
                             role="switch"
                             aria-checked={allActive}
-                            aria-label={`${allActive ? 'Nonaktifkan' : 'Aktifkan'} semua ${categoryLabels[group.category]} ${group.operator}`}
+                            aria-label={`${allActive ? 'Sembunyikan' : 'Tampilkan'} semua produk ${categoryLabels[group.category]} ${group.operator}`}
                             disabled={pending}
                             onClick={() => void toggleProviderStatus(group)}
                             className={`inline-flex h-6 w-11 items-center rounded-full p-0.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-60 ${

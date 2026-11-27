@@ -90,13 +90,16 @@ export async function checkDigiflazzBalance(config: DigiflazzConfig) {
   return response.json() as Promise<unknown>;
 }
 
-export async function fetchDigiflazzPriceList(config: DigiflazzConfig) {
+export async function fetchDigiflazzPriceList(
+  config: DigiflazzConfig,
+  command: 'prepaid' | 'pasca' = 'prepaid',
+) {
   const sign = generateDigiflazzSignature(config.username, config.apiKey, 'pricelist');
   const response = await fetch('https://api.digiflazz.com/v1/price-list', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      cmd: 'prepaid',
+      cmd: command,
       username: config.username,
       sign,
     }),

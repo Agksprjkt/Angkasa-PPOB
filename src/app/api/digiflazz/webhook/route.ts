@@ -1,7 +1,7 @@
-import { eq } from 'drizzle-orm';
+import { eq, or } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/lib/server/db/client';
-import { products, transactions } from '@/lib/server/db/schema';
+import { billInquiries, products, transactions } from '@/lib/server/db/schema';
 import { getDigiflazzConfig, getVendorRuntimeConfig } from '@/lib/server/integration-settings';
 import {
   isDigiflazzStatusCheckSafe,
@@ -35,9 +35,8 @@ function readRefId(value: unknown): string {
 }
 
 // Digiflazz signs the raw body with HMAC-SHA1 using the webhook secret configured
-// in the member panel. The payload is only a hint: status is re-read from
-// Digiflazz (or applied directly when the signed payload already names a state),
-// so a forged body cannot mark an order successful.
+// in the member panel. A verified callback is authoritative; the 90-day limit
+// applies only to fallback status queries, which can create a new transaction.
 export async function POST(request: NextRequest) {
   const secret = await getWebhookSecret();
   if (!secret || Buffer.byteLength(secret) < 16) {
@@ -77,8 +76,7 @@ export async function POST(request: NextRequest) {
     return noStore({ received: true, pong: true });
   }
   const userAgent = request.headers.get('user-agent') ?? '';
-  if (userAgent.includes('Pasca') || userAgent.includes('Hotel')) {
-    // Postpaid and hotel callbacks are out of scope; acknowledge so they stop retrying.
+  if (userAgent.includes('Hotel')) {
     return noStore({ received: true, ignored: 'unsupported-product-type' });
   }
 
@@ -100,20 +98,21 @@ export async function POST(request: NextRequest) {
       status: transactions.status,
       paymentMethod: transactions.paymentMethod,
       createdAt: transactions.createdAt,
-      referenceId: transactions.referenceId,
-      category: transactions.category,
-      destination: transactions.destination,
-      serverZoneId: transactions.serverZoneId,
       productVendorCode: products.vendorCode,
     })
     .from(transactions)
     .leftJoin(products, eq(transactions.productId, products.id))
-    .where(eq(transactions.referenceId, refId))
+    .leftJoin(billInquiries, eq(transactions.billInquiryId, billInquiries.id))
+    .where(or(
+      eq(transactions.referenceId, refId),
+      eq(billInquiries.providerRef, refId),
+    ))
     .limit(1)
     .then((rows) => rows[0]);
 
   if (!transaction) {
     // Unknown reference: acknowledge without acting so a probing caller learns nothing.
+    await markWebhookEventProcessed('digiflazz', claim.id);
     return noStore({ received: true });
   }
 
@@ -121,13 +120,6 @@ export async function POST(request: NextRequest) {
     if (transaction.status !== 'pending') {
       await markWebhookEventProcessed('digiflazz', claim.id);
       return noStore({ received: true, ignored: 'transaction-already-settled' });
-    }
-
-    if (!isDigiflazzStatusCheckSafe(transaction.createdAt, new Date())) {
-      // Digiflazz re-creates a transaction after 90 days; never re-query. The
-      // reconciler parks it for admin review instead.
-      await markWebhookEventProcessed('digiflazz', claim.id);
-      return noStore({ received: true, ignored: 'status-check-window-expired' });
     }
 
     if (response) {
@@ -142,11 +134,30 @@ export async function POST(request: NextRequest) {
       ) {
         return noStore({ error: 'DIGIFLAZZ_CREDENTIALS_NOT_CONFIGURED' }, 503);
       }
-      await reconcileBalanceOrder(transaction.id, {
-        username: config.username,
-        apiKey: config.apiKey,
-        mode: config.mode,
-      });
+      if (!isDigiflazzStatusCheckSafe(transaction.createdAt, new Date())) {
+        await reconcileBalanceOrder(transaction.id, {
+          username: config.username,
+          apiKey: config.apiKey,
+          mode: config.mode,
+        }, { force: true });
+      } else {
+        const reconciled = await reconcileBalanceOrder(transaction.id, {
+          username: config.username,
+          apiKey: config.apiKey,
+          mode: config.mode,
+        }, { force: true });
+        if (!reconciled) {
+          const current = await db
+            .select({ status: transactions.status })
+            .from(transactions)
+            .where(eq(transactions.id, transaction.id))
+            .limit(1)
+            .then((rows) => rows[0]);
+          if (current?.status === 'pending') {
+            return noStore({ error: 'RECONCILIATION_NOT_READY' }, 503);
+          }
+        }
+      }
     }
   } catch (error) {
     console.error(

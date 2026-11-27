@@ -2,6 +2,7 @@ import 'server-only';
 
 import { and, eq, lt, or, sql } from 'drizzle-orm';
 import { checkDigiflazzTransactionStatus } from '@/lib/digiflazz';
+import { checkDigiflazzPostpaidStatus } from '@/lib/digiflazz-postpaid';
 import {
   isDigiflazzStatusCheckSafe,
   mapDigiflazzStatus,
@@ -12,28 +13,37 @@ import { mapTokoVoucherStatus } from '@/lib/tokovoucher-protocol';
 import { getTokoVoucherConfig } from '@/lib/server/integration-settings';
 import { getDatabase } from '@/lib/server/db/client';
 import { databaseMode } from '@/lib/server/db/database-mode';
-import { balanceLedger, products, transactions } from '@/lib/server/db/schema';
+import {
+  balanceLedger,
+  billInquiries,
+  products,
+  transactions,
+} from '@/lib/server/db/schema';
 import { applyBalanceDelta } from '@/lib/server/wallet';
 import { settleFlashSaleForTransaction } from '@/lib/server/flash-sales';
 import { settleVoucherForTransaction } from '@/lib/server/vouchers';
 import type { DigiflazzConfig } from '@/lib/digiflazz';
 
 export const digiflazzReconciliationCooldownMs = 2 * 60_000;
+export const tokoVoucherReconciliationCooldownMs = 10 * 60_000;
 
 // The Digiflazz config is only consulted for Digiflazz orders; a TokoVoucher
 // order loads its own credentials, so this argument is optional.
 export async function reconcileBalanceOrder(
   transactionId: string,
   config?: DigiflazzConfig,
+  options: { force?: boolean } = {},
 ) {
   const db = getDatabase();
   const transaction = await db
     .select({
       transaction: transactions,
       vendorCode: products.vendorCode,
+      billProviderRef: billInquiries.providerRef,
     })
     .from(transactions)
     .leftJoin(products, eq(transactions.productId, products.id))
+    .leftJoin(billInquiries, eq(transactions.billInquiryId, billInquiries.id))
     .where(and(
       eq(transactions.id, transactionId),
       eq(transactions.status, 'pending'),
@@ -45,10 +55,18 @@ export async function reconcileBalanceOrder(
   if (!transaction) return false;
 
   const reconciliation = transaction.transaction.vendorResponse?.reconciliation;
+  const providerRef = transaction.billProviderRef ?? transaction.transaction.referenceId;
+  const isPostpaid = transaction.transaction.billInquiryId !== null;
   // Orders created before the vendor column existed are Digiflazz orders.
   const vendor = reconciliation?.vendor ?? 'Digiflazz';
   if (vendor === 'TokoVoucher') {
-    return reconcileTokoVoucherOrder(transactionId, transaction, db);
+    return reconcileTokoVoucherOrder(
+      transactionId,
+      transaction,
+      providerRef,
+      db,
+      options,
+    );
   }
   if (!config) throw new Error('DIGIFLAZZ_CONFIG_REQUIRED');
   if (reconciliation?.mode && reconciliation.mode !== config.mode) {
@@ -94,23 +112,45 @@ export async function reconcileBalanceOrder(
       eq(transactions.paymentMethod, 'balance'),
       lt(
         transactions.updatedAt,
-        new Date(Date.now() - digiflazzReconciliationCooldownMs),
+        new Date(Date.now() - (
+          options.force ? 30_000 : digiflazzReconciliationCooldownMs
+        )),
       ),
     ))
     .returning({ id: transactions.id });
   if (!claimed[0]) return false;
 
-  const result = await checkDigiflazzTransactionStatus(config, {
-    buyerSkuCode,
-    customerNo,
-    refId: transaction.transaction.referenceId,
-  });
-  const response = readDigiflazzTransactionResponse(result);
-  if (!response || response.refId !== transaction.transaction.referenceId) {
-    throw new Error('Digiflazz returned an unclear transaction status.');
+  let responseStatus: string;
+  let responseMessage: string;
+  let responseRc: string;
+  let responseSn: string | null;
+  if (isPostpaid) {
+    const response = await checkDigiflazzPostpaidStatus(config, {
+      skuCode: buyerSkuCode,
+      customerNo,
+      refId: providerRef,
+    });
+    responseStatus = response.status;
+    responseMessage = response.message;
+    responseRc = response.rc ?? '';
+    responseSn = response.sn;
+  } else {
+    const result = await checkDigiflazzTransactionStatus(config, {
+      buyerSkuCode,
+      customerNo,
+      refId: providerRef,
+    });
+    const response = readDigiflazzTransactionResponse(result);
+    if (!response || response.refId !== providerRef) {
+      throw new Error('Digiflazz returned an unclear transaction status.');
+    }
+    responseStatus = response.status;
+    responseMessage = response.message;
+    responseRc = response.rc;
+    responseSn = response.sn ?? null;
   }
 
-  const status = mapDigiflazzStatus(response.status, response.rc);
+  const status = mapDigiflazzStatus(responseStatus, responseRc);
   const vendorResponse = {
     ...(transaction.transaction.vendorResponse ?? {
       code: '',
@@ -118,9 +158,9 @@ export async function reconcileBalanceOrder(
       rc: '',
       rawTime: '',
     }),
-    code: response.rc,
-    message: response.message.slice(0, 500),
-    rc: response.rc,
+    code: responseRc,
+    message: responseMessage.slice(0, 500),
+    rc: responseRc,
     rawTime: new Date().toISOString(),
     reconciliation: {
       buyerSkuCode,
@@ -134,7 +174,7 @@ export async function reconcileBalanceOrder(
     status,
     vendorResponse,
     vendorLabel: 'Digiflazz',
-    sn: status === 'success' ? response.sn ?? null : null,
+    sn: status === 'success' ? responseSn : null,
     currentNeedsManualReview: transaction.transaction.needsManualReview,
     currentManualReviewAt: transaction.transaction.manualReviewAt,
   });
@@ -142,15 +182,17 @@ export async function reconcileBalanceOrder(
   return true;
 }
 
-// TokoVoucher has no 90-day recreation rule; their status endpoint is safe to
-// poll indefinitely. Everything else mirrors the Digiflazz path.
+// TokoVoucher status queries are safe to retry indefinitely, but the provider
+// recommends spacing periodic checks by ten minutes.
 async function reconcileTokoVoucherOrder(
   transactionId: string,
   transaction: {
     transaction: typeof transactions.$inferSelect;
     vendorCode: string | null;
   },
+  providerRef: string,
   db: ReturnType<typeof getDatabase>,
+  options: { force?: boolean },
 ) {
   const config = await getTokoVoucherConfig();
   if (!config.memberCode || !config.secret) {
@@ -166,7 +208,9 @@ async function reconcileTokoVoucherOrder(
       eq(transactions.paymentMethod, 'balance'),
       lt(
         transactions.updatedAt,
-        new Date(Date.now() - digiflazzReconciliationCooldownMs),
+        new Date(Date.now() - (
+          options.force ? 30_000 : tokoVoucherReconciliationCooldownMs
+        )),
       ),
     ))
     .returning({ id: transactions.id });
@@ -179,9 +223,9 @@ async function reconcileTokoVoucherOrder(
       defaultSignature: config.defaultSignature,
       mode: config.mode,
     },
-    { refId: transaction.transaction.referenceId },
+    { refId: providerRef },
   );
-  if (response.refId !== transaction.transaction.referenceId) {
+  if (response.refId !== providerRef) {
     throw new Error('TokoVoucher returned an unclear transaction status.');
   }
 
@@ -307,12 +351,19 @@ async function settleReconciledOrder(input: {
   });
 }
 
-export async function listReconciliationCandidates(batchSize: number, updatedBefore: Date) {
+export async function listReconciliationCandidates(
+  batchSize: number,
+  digiflazzUpdatedBefore: Date,
+  tokoVoucherUpdatedBefore = digiflazzUpdatedBefore,
+) {
   const hasReconciliationSku = databaseMode === 'postgres'
     ? sql`${transactions.vendorResponse}->'reconciliation'->>'buyerSkuCode' IS NOT NULL`
     : sql`json_extract(${transactions.vendorResponse}, '$.reconciliation.buyerSkuCode') IS NOT NULL`;
+  const isTokoVoucherReconciliation = databaseMode === 'postgres'
+    ? sql`${transactions.vendorResponse}->'reconciliation'->>'vendor' = 'TokoVoucher'`
+    : sql`json_extract(${transactions.vendorResponse}, '$.reconciliation.vendor') = 'TokoVoucher'`;
   return getDatabase()
-    .select({ id: transactions.id })
+    .select({ id: transactions.id, vendor: products.vendor })
     .from(transactions)
     .leftJoin(products, eq(transactions.productId, products.id))
     .where(and(
@@ -322,10 +373,15 @@ export async function listReconciliationCandidates(batchSize: number, updatedBef
       eq(transactions.needsManualReview, false),
       // A typed Drizzle operator, not a raw sql template: the raw form binds the
       // Date without a type mapping and postgres-js then fails to encode it.
-      lt(transactions.updatedAt, updatedBefore),
       or(
-        eq(products.vendor, 'Digiflazz'),
-        hasReconciliationSku,
+        and(
+          lt(transactions.updatedAt, digiflazzUpdatedBefore),
+          or(eq(products.vendor, 'Digiflazz'), hasReconciliationSku),
+        ),
+        and(
+          lt(transactions.updatedAt, tokoVoucherUpdatedBefore),
+          or(eq(products.vendor, 'TokoVoucher'), isTokoVoucherReconciliation),
+        ),
       ),
     ))
     .orderBy(transactions.updatedAt)

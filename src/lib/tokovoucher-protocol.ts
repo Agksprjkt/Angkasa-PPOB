@@ -17,6 +17,16 @@ export function tokoVoucherSignature(memberCode: string, secret: string, refId: 
     .digest('hex');
 }
 
+export function tokoVoucherPostpaidSignature(
+  memberCode: string,
+  secret: string,
+  refId: string,
+) {
+  return createHash('md5')
+    .update(`${refId}:${memberCode}:${secret}`)
+    .digest('hex');
+}
+
 // Their API documents price as a number but sends strings in some payloads.
 export function parseTokoVoucherPrice(value: unknown): number | null {
   const price = typeof value === 'number'
@@ -72,11 +82,18 @@ export function buildTokoVoucherDestination(
   return zone ? { tujuan: trimmed, server_id: zone } : { tujuan: trimmed };
 }
 
-// The webhook carries a shared token in a header, not an HMAC over the body.
-export function verifyTokoVoucherWebhook(token: string | null, secret: string) {
-  if (!secret || !token) return false;
-  const supplied = Buffer.from(token.trim());
-  const expected = Buffer.from(secret);
+// The documented callback signature is md5(MEMBER_CODE:SECRET:REF_ID).
+export function verifyTokoVoucherWebhook(
+  signature: string | null,
+  memberCode: string,
+  secret: string,
+  refId: string,
+) {
+  if (!signature || !memberCode || !secret || !refId) return false;
+  const normalized = signature.trim();
+  if (!/^[0-9a-f]{32}$/i.test(normalized)) return false;
+  const supplied = Buffer.from(normalized, 'hex');
+  const expected = Buffer.from(tokoVoucherSignature(memberCode, secret, refId), 'hex');
   return supplied.length === expected.length && timingSafeEqual(supplied, expected);
 }
 

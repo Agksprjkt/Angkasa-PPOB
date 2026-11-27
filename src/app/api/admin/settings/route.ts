@@ -110,7 +110,6 @@ function snapshotResponse(
       showProducts: values.tokovoucherShowProducts !== 'false',
       showProductsSource: sources.tokovoucherShowProducts,
       showProductsEditable: sources.tokovoucherShowProducts !== 'environment',
-      webhookSecret: status('tokovoucherWebhookSecret'),
       webhookUrl: `${webhookBaseUrl}/api/tokovoucher/webhook`,
       autoSync: tokoVoucherAutoSync,
     },

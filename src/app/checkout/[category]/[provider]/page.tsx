@@ -154,6 +154,7 @@ export default function ProviderCheckoutPage() {
                 view="provider"
                 initialCategory={category}
                 initialOperator={providerName}
+                onRequireAuth={() => setIsAuthOpen(true)}
                 onSelectProduct={handleSelectProduct}
               />
             )}

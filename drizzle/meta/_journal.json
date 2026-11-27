@@ -169,6 +169,13 @@
       "when": 1795695839046,
       "tag": "0023_next_machine_man",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1795784268367,
+      "tag": "0024_neat_baron_strucker",
+      "breakpoints": true
     }
   ]
 }

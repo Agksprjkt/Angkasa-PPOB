@@ -5,22 +5,60 @@ import { getDatabase } from '@/lib/server/db/client';
 import { balanceLedger, invoices, transactions } from '@/lib/server/db/schema';
 import { applyBalanceDelta } from '@/lib/server/wallet';
 import { settleFlashSaleForTransaction } from '@/lib/server/flash-sales';
+import { settleVoucherForTransaction } from '@/lib/server/vouchers';
 import { mapDigiflazzStatus, type DigiflazzTransactionResponse } from '@/lib/digiflazz-protocol';
+import {
+  mapTokoVoucherStatus,
+  type TokoVoucherTransaction,
+} from '@/lib/tokovoucher-protocol';
 
-// Applies a signature-verified Digiflazz payload to a pending transaction. The
-// compare-and-set on `status = pending` keeps a webhook and the reconciler from
-// both crediting a refund, and the refund itself carries an idempotency key.
+// Applies a provider-confirmed final status once. The compare-and-set on
+// `status = pending` keeps callbacks from applying refunds more than once.
 export async function applyDigiflazzTransactionStatus(
   transactionId: string,
   response: DigiflazzTransactionResponse,
 ) {
   const status = mapDigiflazzStatus(response.status, response.rc);
+  return applyProviderTransactionStatus(transactionId, {
+    status,
+    code: response.rc,
+    message: response.message,
+    sn: response.sn,
+    vendorLabel: 'Digiflazz',
+  });
+}
+
+export async function applyTokoVoucherTransactionStatus(
+  transactionId: string,
+  response: TokoVoucherTransaction,
+) {
+  const status = mapTokoVoucherStatus(response.status);
+  return applyProviderTransactionStatus(transactionId, {
+    status,
+    code: response.status,
+    message: response.message,
+    sn: response.sn,
+    vendorLabel: 'TokoVoucher',
+  });
+}
+
+async function applyProviderTransactionStatus(
+  transactionId: string,
+  response: {
+    status: 'success' | 'pending' | 'failed';
+    code: string;
+    message: string;
+    sn?: string | null;
+    vendorLabel: string;
+  },
+) {
+  const { status } = response;
   if (status === 'pending') return false;
 
   const vendorResponse = {
-    code: response.rc,
+    code: response.code,
     message: response.message.slice(0, 500),
-    rc: response.rc,
+    rc: response.code,
     rawTime: new Date().toISOString(),
   };
 
@@ -56,6 +94,12 @@ export async function applyDigiflazzTransactionStatus(
       status === 'success' ? 'consumed' : 'released',
       new Date(),
     );
+    await settleVoucherForTransaction(
+      tx,
+      transactionId,
+      status === 'success' ? 'consumed' : 'released',
+      new Date(),
+    );
 
     if (updated.invoiceId) {
       // A QRIS invoice tracks fulfilment separately from the payment itself.
@@ -85,7 +129,7 @@ export async function applyDigiflazzTransactionStatus(
         type: 'credit',
         amount: updated.amount,
         reference: updated.referenceId,
-        note: `Refund gagal Digiflazz ${updated.productName}`,
+        note: `Refund gagal ${response.vendorLabel} ${updated.productName}`,
       });
       if ('error' in walletResult) throw new Error(walletResult.error);
     }

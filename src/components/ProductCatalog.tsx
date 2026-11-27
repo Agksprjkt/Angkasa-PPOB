@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { gameRequiresServerZone } from '@/lib/order-input-validation';
+import BillInquiryFlow from '@/components/BillInquiryFlow';
 import {
   Smartphone,
   Wifi,
@@ -34,6 +35,8 @@ interface ProductCatalogProps {
   initialSearch?: string;
   initialOperator?: string;
   onCategoryChange?: (category: ProductCategory) => void;
+  // Postpaid needs a logged-in buyer before it can quote a bill.
+  onRequireAuth?: () => void;
   onSelectProduct: (
     product: Product,
     destination: string,
@@ -118,6 +121,7 @@ export default function ProductCatalog({
   initialSearch = '',
   initialOperator,
   onCategoryChange,
+  onRequireAuth,
   onSelectProduct,
 }: ProductCatalogProps) {
   const { products, role, catalogPending } = usePPOB();
@@ -257,6 +261,16 @@ export default function ProductCatalog({
       .map((product) => resolveProviderName(product.operator, product.providerAlias))
       .filter(Boolean))].sort((a, b) => a.localeCompare(b, 'id')),
     [products],
+  );
+
+  // Postpaid needs its own flow, so the billable products are collected once.
+  const billProducts = useMemo(
+    () => products.filter((product) =>
+      product.status === 'active' &&
+      product.category === 'tagihan' &&
+      (selectedBillType === 'All' ||
+        sameProviderName(resolveProviderName(product.operator, product.providerAlias), selectedBillType))),
+    [products, selectedBillType],
   );
 
   // Product types ("Combo Lite", "FlexMax", …) come from the Digiflazz price
@@ -856,7 +870,7 @@ export default function ProductCatalog({
           </div>
         )}
 
-        {/* CASE 5: TAGIHAN */}
+        {/* CASE 5: TAGIHAN — quote the bill first, then pay it. */}
         {activeCategory === 'tagihan' && (
           <div className="space-y-3">
             {view !== 'provider' && <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -877,11 +891,16 @@ export default function ProductCatalog({
               ))}
             </div>}
 
-            <div>
+            {billProducts.length === 0 ? (
               <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3.5 text-xs text-amber-950">
-                Pengecekan dan pembayaran tagihan {selectedBillType === 'All' ? 'belum tersedia' : selectedBillType + ' belum tersedia'} karena integrasi inquiry provider belum dikonfigurasi.
+                Belum ada produk tagihan aktif. Aktifkan produk pascabayar di dashboard lalu muat ulang halaman.
               </p>
-            </div>
+            ) : (
+              <BillInquiryFlow
+                products={billProducts}
+                onRequireAuth={() => onRequireAuth?.()}
+              />
+            )}
           </div>
         )}
 

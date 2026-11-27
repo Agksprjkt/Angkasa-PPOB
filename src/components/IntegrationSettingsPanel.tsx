@@ -121,7 +121,6 @@ type SettingsSnapshot = {
     showProducts: boolean;
     showProductsSource: SettingStatus['source'];
     showProductsEditable: boolean;
-    webhookSecret: SettingStatus;
     webhookUrl: string;
     autoSync: AutoSyncSettings;
   };
@@ -171,7 +170,6 @@ const sectionSettings: Record<IntegrationSection, string[]> = {
     'tokovoucherMode',
     'tokovoucherEnableRealTransactions',
     'tokovoucherEnabled',
-    'tokovoucherWebhookSecret',
   ],
 };
 
@@ -386,7 +384,6 @@ export default function IntegrationSettingsPanel({
   const [digiflazzWebhookSecret, setDigiflazzWebhookSecret] = useState('');
   const [tokovoucherEnabled, setTokovoucherEnabled] = useState(false);
   const [tokovoucherShowProducts, setTokovoucherShowProducts] = useState(true);
-  const [tokovoucherWebhookSecret, setTokovoucherWebhookSecret] = useState('');
   const [pendingDisable, setPendingDisable] = useState<IntegrationSection | null>(null);
   const [copiedWebhook, setCopiedWebhook] = useState<string | null>(null);
   const [tokovoucherPriceList, setTokovoucherPriceList] = useState<{
@@ -690,9 +687,6 @@ export default function IntegrationSettingsPanel({
       if (snapshot.tokovoucher.showProductsEditable) {
         values.tokovoucherShowProducts = String(tokovoucherShowProducts);
       }
-      if (tokovoucherWebhookSecret) {
-        values.tokovoucherWebhookSecret = tokovoucherWebhookSecret;
-      }
     } else {
       if (qrislyApiKey) values.qrislyApiKey = qrislyApiKey;
       if (snapshot.qrisly.qrisIdEditable) values.qrislyQrisId = qrislyQrisId;
@@ -735,7 +729,6 @@ export default function IntegrationSettingsPanel({
       } else if (section === 'tokovoucher') {
         setTokovoucherSecret('');
         setTokovoucherDefaultSignature('');
-        setTokovoucherWebhookSecret('');
       } else {
         setQrislyApiKey('');
       }
@@ -1570,23 +1563,9 @@ export default function IntegrationSettingsPanel({
           <WebhookField
             id="tokovoucher-webhook"
             url={snapshot.tokovoucher.webhookUrl}
-            headerHint="Header: X-TokoVoucher-Authorization (token statis)"
+            headerHint="Header: X-TokoVoucher-Authorization (MD5 member_code:secret:ref_id)"
             copied={copiedWebhook === snapshot.tokovoucher.webhookUrl}
             onCopy={() => void copyWebhookUrl(snapshot.tokovoucher.webhookUrl)}
-          />
-          <SecretField
-            id="tokovoucher-webhook-secret"
-            label="Webhook secret"
-            status={snapshot.tokovoucher.webhookSecret}
-            value={tokovoucherWebhookSecret}
-            onChange={setTokovoucherWebhookSecret}
-            clear={clearSettings.includes('tokovoucherWebhookSecret')}
-            onClearChange={(checked) => toggleClear('tokovoucherWebhookSecret', checked)}
-            generating={generatingSecret === 'tokovoucherWebhookSecret'}
-            onGenerate={async () => {
-              const value = await generateSecretFor('tokovoucherWebhookSecret');
-              if (value) setTokovoucherWebhookSecret(value);
-            }}
           />
         </CardContent>
         <div className="flex flex-wrap items-center gap-3">

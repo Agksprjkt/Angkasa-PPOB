@@ -18,6 +18,7 @@ export const {
   accounts,
   verifications,
   products,
+  billInquiries,
   promotionalBanners,
   featuredProducts,
   flashSaleOffers,

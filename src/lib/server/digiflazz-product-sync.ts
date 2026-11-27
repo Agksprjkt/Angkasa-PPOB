@@ -9,6 +9,7 @@ import {
 } from '@/lib/digiflazz-product-sync-schedule';
 import { fetchDigiflazzPriceList } from '@/lib/digiflazz';
 import { parseDigiflazzPrice } from '@/lib/digiflazz-protocol';
+import { readPostpaidProductRow } from '@/lib/postpaid-protocol';
 import { resolveVariant } from '@/lib/product-variant';
 import { invalidateCatalog } from '@/lib/server/catalog-cache';
 import { getDatabase } from '@/lib/server/db/client';
@@ -202,6 +203,92 @@ export async function syncDigiflazzProducts(): Promise<DigiflazzAutoSyncResult> 
   const created = rows.filter((product) => !existingProducts.has(product.vendorCode)).length;
   return {
     total: remoteProducts.total,
+    synced: rows.length,
+    created,
+    updated: rows.length - created,
+    skipped,
+  };
+}
+
+// Postpaid products live in a separate price list (`cmd: "pasca"`). They are
+// written inactive like every synced row, so an admin decides when they go live.
+export async function syncDigiflazzPostpaidProducts(): Promise<DigiflazzAutoSyncResult> {
+  const config = await getDigiflazzConfig();
+  if (!config.username || !config.apiKey) {
+    throw new Error('DIGIFLAZZ_CREDENTIALS_NOT_CONFIGURED');
+  }
+
+  const remote = await fetchDigiflazzPriceList(
+    {
+      username: config.username,
+      apiKey: config.apiKey,
+      mode: config.mode === 'production' ? 'production' : 'sandbox',
+    },
+    'pasca',
+  );
+  const db = getDatabase();
+  const existingProducts = new Map(
+    (await db.select().from(productTable).where(eq(productTable.vendor, 'Digiflazz')))
+      .map((product) => [product.vendorCode, product]),
+  );
+
+  const rows: (typeof productTable.$inferInsert)[] = [];
+  let skipped = 0;
+
+  for (const rawProduct of remote.products) {
+    const row = readPostpaidProductRow(rawProduct);
+    if (!row) {
+      skipped += 1;
+      continue;
+    }
+    const existing = existingProducts.get(row.vendorCode);
+    rows.push({
+      id: existing?.id ?? randomUUID(),
+      vendorCode: row.vendorCode,
+      name: row.name.slice(0, 200),
+      // Postpaid rows always belong to the bill category regardless of what the
+      // provider calls the group.
+      category: 'tagihan',
+      operator: row.operator.slice(0, 200),
+      variant: existing?.variant ?? null,
+      variantSource: existing?.variantSource ?? 'sync',
+      description: existing?.description ?? '',
+      // Postpaid price lists carry the admin fee, not a sale price; the real
+      // amount only exists after an inquiry, so the columns stay at the fee.
+      basePrice: existing?.basePrice ?? row.price,
+      sellPriceUser: existing?.sellPriceUser ?? row.price,
+      sellPriceAgent: existing?.sellPriceAgent ?? row.price,
+      compareAtPrice: existing?.compareAtPrice ?? null,
+      status: existing?.status ?? 'inactive',
+      vendor: 'Digiflazz',
+      vendorLabel: existing?.vendorLabel ?? null,
+    });
+  }
+
+  await db.transaction(async (tx) => {
+    for (let index = 0; index < rows.length; index += 50) {
+      const batch = rows.slice(index, index + 50);
+      await tx
+        .insert(productTable)
+        .values(batch)
+        .onConflictDoUpdate({
+          target: [productTable.vendor, productTable.vendorCode],
+          set: {
+            name: sql`excluded."name"`,
+            operator: sql`excluded."operator"`,
+            updatedAt: sql`excluded."updatedAt"`,
+          },
+          setWhere: and(
+            eq(productTable.vendor, 'Digiflazz'),
+            eq(productTable.vendorCode, sql`excluded."vendorCode"`),
+          ),
+        });
+    }
+  });
+
+  const created = rows.filter((row) => !existingProducts.has(row.vendorCode)).length;
+  return {
+    total: remote.total,
     synced: rows.length,
     created,
     updated: rows.length - created,

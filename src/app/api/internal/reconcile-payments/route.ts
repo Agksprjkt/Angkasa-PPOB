@@ -2,10 +2,12 @@ import { and, asc, eq, isNotNull, lt, lte, or } from 'drizzle-orm';
 import { NextRequest, NextResponse } from 'next/server';
 import { isInternalJobAuthorized } from '@/lib/server/internal-job-auth';
 import { getDigiflazzConfig } from '@/lib/server/integration-settings';
+import type { DigiflazzConfig } from '@/lib/digiflazz';
 import {
   digiflazzReconciliationCooldownMs,
   listReconciliationCandidates,
   reconcileBalanceOrder,
+  tokoVoucherReconciliationCooldownMs,
 } from '@/lib/server/orders/reconcile-balance-order';
 import { getDatabase } from '@/lib/server/db/client';
 import { acquireRedisLease } from '@/lib/server/redis';
@@ -53,7 +55,7 @@ export async function POST(request: NextRequest) {
 }
 
 async function runReconciliation() {
-  const [qrislyCandidates, qrislyDepositCandidates, digiflazzCandidates] = await Promise.all([
+  const [qrislyCandidates, qrislyDepositCandidates, balanceOrderCandidates] = await Promise.all([
     getDatabase()
       .select({ id: invoices.id })
       .from(invoices)
@@ -93,10 +95,11 @@ async function runReconciliation() {
     listReconciliationCandidates(
       batchSize,
       new Date(Date.now() - digiflazzReconciliationCooldownMs),
+      new Date(Date.now() - tokoVoucherReconciliationCooldownMs),
     ),
   ]);
   let digiflazzConfig: Awaited<ReturnType<typeof getDigiflazzConfig>> | null = null;
-  if (digiflazzCandidates.length > 0) {
+  if (balanceOrderCandidates.some(({ vendor }) => vendor === 'Digiflazz')) {
     try {
       digiflazzConfig = await getDigiflazzConfig();
     } catch (error) {
@@ -111,7 +114,7 @@ async function runReconciliation() {
   let failed = 0;
   const reconcile = async (
     id: string,
-    type: 'qrisly' | 'qrisly-deposit' | 'digiflazz',
+    type: 'qrisly' | 'qrisly-deposit' | 'balance-order',
   ) => {
     try {
       if (type === 'qrisly') {
@@ -120,20 +123,18 @@ async function runReconciliation() {
       if (type === 'qrisly-deposit') {
         return await refreshQrislyDeposit(id);
       }
-      const config = digiflazzConfig;
-      if (
-        !config ||
-        !config.username ||
-        !config.apiKey ||
-        (config.mode !== 'sandbox' && config.mode !== 'production')
-      ) {
-        throw new Error('Digiflazz credentials are not configured.');
+      let config: DigiflazzConfig | undefined;
+      if (digiflazzConfig?.username && digiflazzConfig.apiKey) {
+        const mode = digiflazzConfig.mode;
+        if (mode === 'sandbox' || mode === 'production') {
+          config = {
+            username: digiflazzConfig.username,
+            apiKey: digiflazzConfig.apiKey,
+            mode,
+          };
+        }
       }
-      return await reconcileBalanceOrder(id, {
-        username: config.username,
-        apiKey: config.apiKey,
-        mode: config.mode,
-      });
+      return await reconcileBalanceOrder(id, config);
     } catch (error) {
       const table = type === 'qrisly'
         ? invoices
@@ -147,7 +148,7 @@ async function runReconciliation() {
       console.error(
         type === 'qrisly'
           ? '[PAYMENT_RECONCILIATION_ORDER_FAILED]'
-          : '[DIGIFLAZZ_RECONCILIATION_ORDER_FAILED]',
+          : '[BALANCE_ORDER_RECONCILIATION_FAILED]',
         id,
         error instanceof Error ? error.message : 'Unknown reconciliation error',
       );
@@ -157,7 +158,7 @@ async function runReconciliation() {
 
   const candidates: {
     id: string;
-    type: 'qrisly' | 'qrisly-deposit' | 'digiflazz';
+    type: 'qrisly' | 'qrisly-deposit' | 'balance-order';
   }[] = [];
   for (
     let offset = 0;
@@ -165,7 +166,7 @@ async function runReconciliation() {
     (
       offset < qrislyCandidates.length ||
       offset < qrislyDepositCandidates.length ||
-      offset < digiflazzCandidates.length
+      offset < balanceOrderCandidates.length
     );
     offset += 1
   ) {
@@ -178,8 +179,8 @@ async function runReconciliation() {
         type: 'qrisly-deposit',
       });
     }
-    if (digiflazzCandidates[offset] && candidates.length < batchSize) {
-      candidates.push({ id: digiflazzCandidates[offset].id, type: 'digiflazz' });
+    if (balanceOrderCandidates[offset] && candidates.length < batchSize) {
+      candidates.push({ id: balanceOrderCandidates[offset].id, type: 'balance-order' });
     }
   }
   for (let offset = 0; offset < candidates.length; offset += concurrency) {
@@ -200,7 +201,7 @@ async function runReconciliation() {
       failed,
       qrisly: candidates.filter(({ type }) => type === 'qrisly').length,
       qrislyDeposits: candidates.filter(({ type }) => type === 'qrisly-deposit').length,
-      digiflazz: candidates.filter(({ type }) => type === 'digiflazz').length,
+      balanceOrders: candidates.filter(({ type }) => type === 'balance-order').length,
     },
     { headers: { 'Cache-Control': 'no-store' } },
   );

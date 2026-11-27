@@ -161,6 +161,7 @@ export default function HomePage() {
                       key={`${homeCategory}:${catalogSearch}`}
                       initialCategory={homeCategory}
                       initialSearch={catalogSearch}
+                      onRequireAuth={() => setIsAuthModalOpen(true)}
                       onCategoryChange={isCategoryMenu
                         ? (category) => router.push(`/?category=${encodeURIComponent(category)}`)
                         : undefined}

@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { fetchDigiflazzPriceList } from '@/lib/digiflazz';
 import { getAuth } from '@/lib/server/auth';
 import { getDigiflazzConfig } from '@/lib/server/integration-settings';
-import { runDigiflazzProductSync } from '@/lib/server/digiflazz-product-sync';
+import { invalidateCatalog } from '@/lib/server/catalog-cache';
+import {
+  runDigiflazzProductSync,
+  syncDigiflazzPostpaidProducts,
+} from '@/lib/server/digiflazz-product-sync';
 
 export const runtime = 'nodejs';
 
@@ -52,7 +56,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'FORBIDDEN' }, { status: 403 });
   }
 
+  // ?scope=pasca syncs the postpaid price list instead of the prepaid one.
+  const scope = request.nextUrl.searchParams.get('scope');
   try {
+    if (scope === 'pasca') {
+      const result = await syncDigiflazzPostpaidProducts();
+      await invalidateCatalog();
+      return NextResponse.json(result);
+    }
     const outcome = await runDigiflazzProductSync('manual');
     if ('skipped' in outcome) {
       return NextResponse.json({ error: outcome.skipped }, { status: 409 });

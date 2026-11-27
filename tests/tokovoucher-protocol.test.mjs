@@ -8,6 +8,7 @@ import {
   readTokoVoucherError,
   readTokoVoucherProducts,
   readTokoVoucherTransaction,
+  tokoVoucherPostpaidSignature,
   tokoVoucherSignature,
   verifyTokoVoucherWebhook,
 } from '../src/lib/tokovoucher-protocol.ts';
@@ -18,6 +19,13 @@ test('signature follows md5(MEMBER:SECRET:REFID)', () => {
   assert.match(value, /^[0-9a-f]{32}$/);
   assert.equal(value, tokoVoucherSignature('MEM1', 'secret', 'ref1'));
   assert.notEqual(value, tokoVoucherSignature('MEM1', 'secret', 'ref2'));
+});
+
+test('postpaid signature follows the published REF_ID:MEMBER_CODE:SECRET_KEY formula', () => {
+  assert.equal(
+    tokoVoucherPostpaidSignature('MEM1', 'secret', 'ref1'),
+    'fa32ffbcaaa545fdcefeb097163b1984',
+  );
 });
 
 test('price accepts numbers and numeric strings', () => {
@@ -86,15 +94,17 @@ test('game orders send server_id only when a zone exists', () => {
   });
 });
 
-test('webhook token is compared exactly and in constant time', () => {
-  const secret = 'bd134207f74532a8b094676c4a2ca9ed';
-  assert.equal(verifyTokoVoucherWebhook(secret, secret), true);
-  assert.equal(verifyTokoVoucherWebhook(` ${secret} `, secret), true);
-  assert.equal(verifyTokoVoucherWebhook('wrong', secret), false);
-  assert.equal(verifyTokoVoucherWebhook(secret, ''), false);
-  assert.equal(verifyTokoVoucherWebhook(null, secret), false);
-  // Different lengths must not throw.
-  assert.equal(verifyTokoVoucherWebhook('short', secret), false);
+test('webhook signature follows md5(MEMBER_CODE:SECRET:REF_ID)', () => {
+  const signature = tokoVoucherSignature('MEM1', 'secret', 'ref1');
+  assert.equal(verifyTokoVoucherWebhook(signature, 'MEM1', 'secret', 'ref1'), true);
+  assert.equal(verifyTokoVoucherWebhook(` ${signature} `, 'MEM1', 'secret', 'ref1'), true);
+  assert.equal(verifyTokoVoucherWebhook(signature.toUpperCase(), 'MEM1', 'secret', 'ref1'), true);
+  assert.equal(verifyTokoVoucherWebhook(signature, 'MEM1', 'secret', 'ref2'), false);
+  assert.equal(verifyTokoVoucherWebhook(signature, 'MEM2', 'secret', 'ref1'), false);
+  assert.equal(verifyTokoVoucherWebhook('wrong', 'MEM1', 'secret', 'ref1'), false);
+  assert.equal(verifyTokoVoucherWebhook(signature, '', 'secret', 'ref1'), false);
+  assert.equal(verifyTokoVoucherWebhook(null, 'MEM1', 'secret', 'ref1'), false);
+  assert.equal(verifyTokoVoucherWebhook('short', 'MEM1', 'secret', 'ref1'), false);
 });
 
 test('reads the joined product payload', () => {

@@ -121,6 +121,11 @@ export async function createTokoVoucherTransaction(
     signature: tokoVoucherSignature(config.memberCode, config.secret, params.refId),
   });
 
+  if (result.httpStatus < 200 || result.httpStatus >= 300) {
+    const error = readTokoVoucherError(result.data);
+    throw new Error(error ?? `TokoVoucher transaction request gagal (HTTP ${result.httpStatus}).`);
+  }
+
   const transaction = readTokoVoucherTransaction(result.data);
   if (transaction) return transaction;
   // An explicit provider error is surfaced so the caller can classify it; an
@@ -140,6 +145,11 @@ export async function checkTokoVoucherTransactionStatus(
     member_code: config.memberCode,
     signature: tokoVoucherSignature(config.memberCode, config.secret, params.refId),
   });
+
+  if (result.httpStatus < 200 || result.httpStatus >= 300) {
+    const error = readTokoVoucherError(result.data);
+    throw new Error(error ?? `TokoVoucher status request gagal (HTTP ${result.httpStatus}).`);
+  }
 
   const transaction = readTokoVoucherTransaction(result.data);
   if (transaction) return transaction;

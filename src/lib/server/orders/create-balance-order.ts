@@ -3,10 +3,13 @@ import 'server-only';
 import { and, eq, gte, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { createDigiflazzTransaction } from '@/lib/digiflazz';
+import { payDigiflazzBill } from '@/lib/digiflazz-postpaid';
+import { payTokoVoucherBill } from '@/lib/tokovoucher-postpaid';
 import { createOrderCode } from '@/lib/order-codes';
 import { getDatabase } from '@/lib/server/db/client';
 import {
   balanceLedger,
+  billInquiries,
   flashSaleReservations,
   products,
   transactions,
@@ -50,6 +53,8 @@ export type CreateBalanceOrderInput = {
   flashSaleOfferId?: string;
   flashSalePriceExpected?: number;
   voucherCode?: string;
+  // Required for a postpaid product: the bill quote this order was priced from.
+  billInquiryId?: string;
   user: {
     id: string;
     phoneNumber?: string | null;
@@ -127,6 +132,39 @@ export async function createBalanceOrder(
   if (!isOrderableVendor(product.vendor)) {
     return { status: 503, body: { error: 'PRODUCT_VENDOR_NOT_CONFIGURED' } };
   }
+
+  // A postpaid product is priced from an inquiry, never from the price list, so
+  // the order must carry one that is still open and belongs to this buyer.
+  let billInquiry: typeof billInquiries.$inferSelect | null = null;
+  if (product.category === 'tagihan') {
+    const inquiryId = input.billInquiryId?.trim();
+    if (!inquiryId) {
+      return { status: 400, body: { error: 'BILL_INQUIRY_REQUIRED' } };
+    }
+    const [inquiry] = await db
+      .select()
+      .from(billInquiries)
+      .where(eq(billInquiries.id, inquiryId))
+      .limit(1);
+    if (
+      !inquiry ||
+      inquiry.userId !== input.user.id ||
+      inquiry.productId !== product.id ||
+      inquiry.destination !== input.destination.trim()
+    ) {
+      return { status: 404, body: { error: 'BILL_INQUIRY_NOT_FOUND' } };
+    }
+    if (inquiry.status !== 'open') {
+      return { status: 409, body: { error: 'BILL_INQUIRY_ALREADY_USED' } };
+    }
+    if (inquiry.expiresAt.getTime() <= Date.now()) {
+      return { status: 409, body: { error: 'BILL_INQUIRY_EXPIRED' } };
+    }
+    if (inquiry.vendor !== product.vendor) {
+      return { status: 409, body: { error: 'BILL_INQUIRY_VENDOR_MISMATCH' } };
+    }
+    billInquiry = inquiry;
+  }
   // Checked before any balance movement: a switched-off vendor must not take new
   // orders. Pending orders are settled elsewhere, so they keep working.
   if (!isVendorEnabled(product.vendor, await getVendorSwitchValues())) {
@@ -151,6 +189,7 @@ export async function createBalanceOrder(
         apiKey: '',
         mode: 'sandbox' as const,
         enableRealTransactions: false,
+        postpaidEnabled: false,
       };
     } else {
       vendorConfig = await getDigiflazzConfig();
@@ -192,15 +231,22 @@ export async function createBalanceOrder(
     }
   }
 
-  const regularPrice = input.user.role === 'agent'
-    ? product.sellPriceAgent
-    : product.sellPriceUser;
+  const regularPrice = billInquiry
+    ? billInquiry.totalAmount
+    : input.user.role === 'agent'
+      ? product.sellPriceAgent
+      : product.sellPriceUser;
   if (
     !Number.isSafeInteger(regularPrice) ||
     regularPrice <= 0 ||
     !Number.isSafeInteger(product.basePrice)
   ) {
     return { status: 503, body: { error: 'INVALID_PRODUCT_PRICE' } };
+  }
+  // A bill is a fixed amount the provider already quoted; a discount would make
+  // the paid total differ from what the biller expects.
+  if (billInquiry && (input.flashSaleOfferId || input.voucherCode)) {
+    return { status: 400, body: { error: 'PROMOTION_NOT_ALLOWED_FOR_BILL' } };
   }
   if (
     Boolean(input.flashSaleOfferId) !== (input.flashSalePriceExpected !== undefined) ||
@@ -339,11 +385,15 @@ export async function createBalanceOrder(
           operator: product.operator,
           destination,
           serverZoneId,
-          customerName: input.customerName,
+          customerName: billInquiry?.customerName || input.customerName,
           amount: orderPrice,
-          profit: orderPrice - product.basePrice,
+          // A bill's margin is the provider admin fee, not a price-list spread.
+          profit: billInquiry
+            ? Math.max(0, orderPrice - billInquiry.billAmount)
+            : orderPrice - product.basePrice,
           status: 'pending',
           paymentMethod: 'balance',
+          billInquiryId: billInquiry?.id ?? null,
           voucherCode,
           discountAmount,
           vendorResponse: {
@@ -411,6 +461,31 @@ export async function createBalanceOrder(
 
       const balanceAfter = updatedUsers[0].balance;
       const balanceBefore = balanceAfter + orderPrice;
+
+      // Claim the quote in the same transaction that charges the buyer, so two
+      // concurrent orders can never pay one bill twice.
+      if (billInquiry) {
+        const [claimedInquiry] = await tx
+          .update(billInquiries)
+          .set({ status: 'used', updatedAt: new Date() })
+          .where(and(
+            eq(billInquiries.id, billInquiry.id),
+            eq(billInquiries.status, 'open'),
+          ))
+          .returning({ id: billInquiries.id });
+        if (!claimedInquiry) {
+          await tx
+            .update(users)
+            .set({
+              balance: sql`${users.balance} + ${orderPrice}`,
+              updatedAt: new Date(),
+            })
+            .where(eq(users.id, input.user.id));
+          await tx.delete(transactions).where(eq(transactions.id, inserted[0].id));
+          return { billAlreadyUsed: true as const };
+        }
+      }
+
       await tx.insert(balanceLedger).values({
         id: randomUUID(),
         idempotencyKey: `debit:${input.idempotencyKey}`,
@@ -457,6 +532,10 @@ export async function createBalanceOrder(
       return { status: 409, body: { error: 'INSUFFICIENT_BALANCE' } };
     }
 
+    if ('billAlreadyUsed' in result && result.billAlreadyUsed) {
+      return { status: 409, body: { error: 'BILL_INQUIRY_ALREADY_USED' } };
+    }
+
     if ('flashSaleError' in result) {
       return { status: 409, body: { error: result.flashSaleError } };
     }
@@ -494,7 +573,39 @@ export async function createBalanceOrder(
     let vendorCode: string;
     let vendorSn: string | null;
     try {
-      if (product.vendor === 'TokoVoucher') {
+      // A bill is paid against the quote the provider already issued, so the
+      // vendor reference is the inquiry ref, never the order reference.
+      if (billInquiry) {
+        const payment = product.vendor === 'TokoVoucher'
+          ? await payTokoVoucherBill(
+            {
+              memberCode: tokoVoucherConfig!.memberCode,
+              secret: tokoVoucherConfig!.secret,
+              defaultSignature: tokoVoucherConfig!.defaultSignature,
+              mode: tokoVoucherConfig!.mode,
+            },
+            {
+              skuCode: product.vendorCode,
+              customerNo: destination,
+              refId: billInquiry.providerRef,
+              serverId: serverZoneId,
+            },
+          )
+          : await payDigiflazzBill(
+            { username: username ?? '', apiKey: apiKey ?? '', mode: mode === 'production' ? 'production' : 'sandbox' },
+            {
+              skuCode: product.vendorCode,
+              customerNo: destination,
+              refId: billInquiry.providerRef,
+            },
+          );
+        status = product.vendor === 'TokoVoucher'
+          ? mapTokoVoucherStatus(payment.status)
+          : mapDigiflazzStatus(payment.status, payment.rc ?? '');
+        vendorMessage = payment.message;
+        vendorCode = payment.rc ?? payment.status;
+        vendorSn = payment.sn;
+      } else if (product.vendor === 'TokoVoucher') {
         const response = await createTokoVoucherTransaction(
           {
             memberCode: tokoVoucherConfig!.memberCode,
@@ -570,7 +681,7 @@ export async function createBalanceOrder(
             type: 'credit',
             amount: price,
             reference: referenceId,
-            note: `Refund gagal Digiflazz ${product.name}`,
+            note: `Refund gagal ${product.vendor} ${product.name}`,
           });
           if ('error' in walletResult) throw new Error(walletResult.error);
         }

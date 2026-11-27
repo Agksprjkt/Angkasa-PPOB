@@ -81,6 +81,13 @@ export async function POST(request: NextRequest) {
       : undefined;
   const transactionPin =
     typeof payload.transactionPin === 'string' ? payload.transactionPin : undefined;
+  if ('billInquiryId' in payload && typeof payload.billInquiryId !== 'string') {
+    return NextResponse.json({ error: 'INVALID_BILL_INQUIRY' }, { status: 400 });
+  }
+  const billInquiryId =
+    typeof payload.billInquiryId === 'string' && payload.billInquiryId.trim()
+      ? payload.billInquiryId.trim().slice(0, 128)
+      : undefined;
 
   if (
     !productId ||
@@ -115,6 +122,7 @@ export async function POST(request: NextRequest) {
     flashSalePriceExpected:
       typeof flashSalePriceExpected === 'number' ? flashSalePriceExpected : undefined,
     voucherCode,
+    billInquiryId,
     user: {
       id: session.user.id,
       phoneNumber: session.user.phoneNumber,

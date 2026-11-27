@@ -90,6 +90,7 @@ interface PPOBContextType {
     serverZoneId?: string,
     transactionPin?: string,
     voucherCode?: string,
+    billInquiryId?: string,
   ) => Promise<{ success: boolean; transaction: Transaction; error?: string }>;
 
   // Deposits
@@ -565,14 +566,16 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
     serverZoneId?: string,
     transactionPin?: string,
     voucherCode?: string,
+    billInquiryId?: string,
   ): Promise<{ success: boolean; transaction: Transaction; error?: string }> => {
     if (!currentUser) {
       throw new Error('Silakan login untuk membayar menggunakan saldo deposit.');
     }
 
     // A voucher changes the payable amount, so it must be part of the key: reusing
-    // the key of an unvouchered attempt would replay the old order.
-    const requestKey = `${currentUser.id}:${productId}:${destination}:${serverZoneId ?? ''}:${voucherCode ?? ''}`;
+    // the key of an unvouchered attempt would replay the old order. The bill quote
+    // is part of it too, since a different bill is a different order.
+    const requestKey = `${currentUser.id}:${productId}:${destination}:${serverZoneId ?? ''}:${voucherCode ?? ''}:${billInquiryId ?? ''}`;
     let idempotencyKey = purchaseKeys.current.get(requestKey);
     if (!idempotencyKey) {
       idempotencyKey = crypto.randomUUID();
@@ -593,6 +596,7 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
         transactionPin,
         paymentMethod: 'balance',
         ...(voucherCode ? { voucherCode } : {}),
+        ...(billInquiryId ? { billInquiryId } : {}),
       }),
     });
 
