@@ -6,7 +6,12 @@ import Link from 'next/link';
 import { usePPOB } from '@/context/PPOBContext';
 import { CatalogProduct, Product, ProductCategory } from '@/types/ppob';
 import { vendorLabelOf } from '@/lib/vendor-registry';
-import { providerGroupKey, resolveProviderName, sameProviderName } from '@/lib/provider-alias';
+import {
+  isProductInProviderGroup,
+  providerGroupKey,
+  resolveProviderName,
+  sameProviderName,
+} from '@/lib/provider-alias';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -222,7 +227,11 @@ export default function ProductCatalog({
     () => [...new Set(
       products
         .filter((product) => product.status === 'active' && product.category === activeCategory)
-        .map((product) => resolveProviderName(product.operator, product.providerAlias))
+        .map((product) => resolveProviderName(
+          product.operator,
+          product.providerAlias,
+          product.storefrontGroup,
+        ))
         .filter(Boolean),
     )].sort((a, b) => a.localeCompare(b, 'id')),
     [products, activeCategory],
@@ -237,28 +246,43 @@ export default function ProductCatalog({
     ? products.find((product) =>
         product.status === 'active' &&
         product.category === activeCategory &&
-        sameProviderName(resolveProviderName(product.operator, product.providerAlias), activeProvider) &&
+        sameProviderName(
+          resolveProviderName(product.operator, product.providerAlias, product.storefrontGroup),
+          activeProvider,
+        ) &&
         (product.providerCoverUrl || product.providerDescription),
       )
     : null;
   const availableEwallets = useMemo(
     () => [...new Set(products
       .filter((product) => product.status === 'active' && product.category === 'ewallet')
-      .map((product) => resolveProviderName(product.operator, product.providerAlias))
+      .map((product) => resolveProviderName(
+        product.operator,
+        product.providerAlias,
+        product.storefrontGroup,
+      ))
       .filter(Boolean))].sort((a, b) => a.localeCompare(b, 'id')),
     [products],
   );
   const availableGames = useMemo(
     () => [...new Set(products
       .filter((product) => product.status === 'active' && product.category === 'game')
-      .map((product) => resolveProviderName(product.operator, product.providerAlias))
+      .map((product) => resolveProviderName(
+        product.operator,
+        product.providerAlias,
+        product.storefrontGroup,
+      ))
       .filter(Boolean))].sort((a, b) => a.localeCompare(b, 'id')),
     [products],
   );
   const availableBillTypes = useMemo(
     () => [...new Set(products
       .filter((product) => product.status === 'active' && product.category === 'tagihan')
-      .map((product) => resolveProviderName(product.operator, product.providerAlias))
+      .map((product) => resolveProviderName(
+        product.operator,
+        product.providerAlias,
+        product.storefrontGroup,
+      ))
       .filter(Boolean))].sort((a, b) => a.localeCompare(b, 'id')),
     [products],
   );
@@ -269,7 +293,10 @@ export default function ProductCatalog({
       product.status === 'active' &&
       product.category === 'tagihan' &&
       (selectedBillType === 'All' ||
-        sameProviderName(resolveProviderName(product.operator, product.providerAlias), selectedBillType))),
+        sameProviderName(
+          resolveProviderName(product.operator, product.providerAlias, product.storefrontGroup),
+          selectedBillType,
+        ))),
     [products, selectedBillType],
   );
 
@@ -285,8 +312,13 @@ export default function ProductCatalog({
     const scoped = products.filter((product) =>
       product.status === 'active' &&
       product.category === activeCategory &&
+      (view !== 'provider' || !initialOperator ||
+        isProductInProviderGroup(product, activeCategory, initialOperator)) &&
       (!operator || operator === 'All' ||
-        sameProviderName(resolveProviderName(product.operator, product.providerAlias), operator)),
+        sameProviderName(
+          resolveProviderName(product.operator, product.providerAlias, product.storefrontGroup),
+          operator,
+        )),
     );
     return [...new Set(
       scoped
@@ -300,6 +332,8 @@ export default function ProductCatalog({
     selectedEwallet,
     selectedGame,
     selectedBillType,
+    view,
+    initialOperator,
   ]);
 
   // Filtered Products
@@ -307,6 +341,13 @@ export default function ProductCatalog({
     return products.filter((p) => {
       if (p.category !== activeCategory) return false;
       if (p.status !== 'active') return false;
+      if (
+        view === 'provider' &&
+        initialOperator &&
+        !isProductInProviderGroup(p, activeCategory, initialOperator)
+      ) {
+        return false;
+      }
       if (productSearch.trim()) {
         const query = productSearch.trim().toLocaleLowerCase('id-ID');
         if (!`${p.name} ${p.description}`.toLocaleLowerCase('id-ID').includes(query)) {
@@ -316,25 +357,37 @@ export default function ProductCatalog({
 
       if (activeCategory === 'pulsa' || activeCategory === 'data' || activeCategory === 'voucher') {
         const opToFilter = selectedOperator !== 'All' ? selectedOperator : detectedOperator;
-        if (opToFilter && !sameProviderName(resolveProviderName(p.operator, p.providerAlias), opToFilter)) {
+        if (opToFilter && !sameProviderName(
+          resolveProviderName(p.operator, p.providerAlias, p.storefrontGroup),
+          opToFilter,
+        )) {
           return false;
         }
       }
 
       if (activeCategory === 'ewallet') {
-        if (selectedEwallet !== 'All' && !sameProviderName(resolveProviderName(p.operator, p.providerAlias), selectedEwallet)) {
+        if (selectedEwallet !== 'All' && !sameProviderName(
+          resolveProviderName(p.operator, p.providerAlias, p.storefrontGroup),
+          selectedEwallet,
+        )) {
           return false;
         }
       }
 
       if (activeCategory === 'game') {
-        if (selectedGame !== 'All' && !sameProviderName(resolveProviderName(p.operator, p.providerAlias), selectedGame)) {
+        if (selectedGame !== 'All' && !sameProviderName(
+          resolveProviderName(p.operator, p.providerAlias, p.storefrontGroup),
+          selectedGame,
+        )) {
           return false;
         }
       }
 
       if (activeCategory === 'tagihan') {
-        if (selectedBillType !== 'All' && !sameProviderName(resolveProviderName(p.operator, p.providerAlias), selectedBillType)) {
+        if (selectedBillType !== 'All' && !sameProviderName(
+          resolveProviderName(p.operator, p.providerAlias, p.storefrontGroup),
+          selectedBillType,
+        )) {
           return false;
         }
       }
@@ -361,6 +414,7 @@ export default function ProductCatalog({
     selectedGameProductGroup,
     selectedVariant,
     view,
+    initialOperator,
   ]);
 
   const isTargetReady = (() => {
@@ -383,7 +437,12 @@ export default function ProductCatalog({
       .filter((product) => product.status === 'active' && product.category === activeCategory)
       .forEach((product) => {
         // An admin alias merges two vendors selling the same brand into one card.
-        const key = providerGroupKey(product.category, product.operator, product.providerAlias);
+        const key = providerGroupKey(
+          product.category,
+          product.operator,
+          product.providerAlias,
+          product.storefrontGroup,
+        );
         const existing = groups.get(key);
         if (existing) {
           existing.count += 1;
@@ -391,7 +450,11 @@ export default function ProductCatalog({
           return;
         }
         groups.set(key, {
-          operator: resolveProviderName(product.operator, product.providerAlias),
+          operator: resolveProviderName(
+            product.operator,
+            product.providerAlias,
+            product.storefrontGroup,
+          ),
           product,
           count: 1,
           vendors: [product.vendor],
@@ -406,7 +469,10 @@ export default function ProductCatalog({
         product.status === 'active' &&
         product.category === activeCategory &&
         (!initialOperator ||
-          sameProviderName(resolveProviderName(product.operator, product.providerAlias), initialOperator)),
+          sameProviderName(
+            resolveProviderName(product.operator, product.providerAlias, product.storefrontGroup),
+            initialOperator,
+          )),
       )
       .forEach((product) => {
         counts.Semua += 1;
@@ -659,7 +725,10 @@ export default function ProductCatalog({
                           const providerProduct = products.find((product) =>
                             product.status === 'active' &&
                             product.category === activeCategory &&
-                            sameProviderName(resolveProviderName(product.operator, product.providerAlias), op) &&
+                            sameProviderName(
+                              resolveProviderName(product.operator, product.providerAlias, product.storefrontGroup),
+                              op,
+                            ) &&
                             product.providerIconUrl,
                           );
                           return providerProduct?.providerIconUrl ? (
@@ -933,13 +1002,19 @@ export default function ProductCatalog({
                       product.status === 'active' &&
                       product.category === activeCategory &&
                       (!initialOperator ||
-                        sameProviderName(resolveProviderName(product.operator, product.providerAlias), initialOperator)),
+                        sameProviderName(
+                          resolveProviderName(product.operator, product.providerAlias, product.storefrontGroup),
+                          initialOperator,
+                        )),
                     ).length
                   : products.filter((product) =>
                       product.status === 'active' &&
                       product.category === activeCategory &&
                       (!initialOperator ||
-                        sameProviderName(resolveProviderName(product.operator, product.providerAlias), initialOperator)) &&
+                        sameProviderName(
+                          resolveProviderName(product.operator, product.providerAlias, product.storefrontGroup),
+                          initialOperator,
+                        )) &&
                       (product.variant ?? '').toLowerCase() === variant.toLowerCase(),
                     ).length;
                 return (
@@ -1026,7 +1101,9 @@ export default function ProductCatalog({
                     key={product.id}
                     type="button"
                     disabled={!isTargetReady || (product.category === 'game' && !validGameInput)}
-                    aria-label={`Pilih ${product.name}, ${activePrice.toLocaleString('id-ID')} rupiah`}
+                    aria-label={`Pilih ${product.name}${
+                      product.promoBadge?.trim() ? `, badge ${product.promoBadge.trim()}` : ''
+                    }, ${activePrice.toLocaleString('id-ID')} rupiah`}
                     onClick={() => {
                       let dest = destinationNumber;
                       let cust: string | undefined;
@@ -1061,6 +1138,13 @@ export default function ProductCatalog({
                     }}
                     className="liquid-product-card group flex min-h-28 min-w-0 flex-col justify-between rounded-xl border border-slate-200 bg-white/60 p-3 text-left transition-all hover:border-blue-300 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-55 sm:p-3.5"
                   >
+                    {product.promoBadge?.trim() && (
+                      <span
+                        className="mb-2 inline-flex w-fit rounded-full border border-amber-200 bg-amber-100 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-800"
+                      >
+                        {product.promoBadge.trim()}
+                      </span>
+                    )}
                     <div className="flex min-w-0 items-center gap-2">
                       <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg text-slate-500">
                         {product.providerIconUrl ? (

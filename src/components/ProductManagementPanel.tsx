@@ -1,9 +1,14 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Product, ProductCategory } from '@/types/ppob';
 import { vendorLabelOf } from '@/lib/vendor-registry';
-import { providerGroupKey, resolveProviderName, sameProviderName } from '@/lib/provider-alias';
+import {
+  getStorefrontGroupOptions,
+  providerGroupKey,
+  resolveProviderName,
+  sameProviderName,
+} from '@/lib/provider-alias';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -13,6 +18,14 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { usePPOB } from '@/context/PPOBContext';
 import {
   CircleDollarSign,
@@ -35,6 +48,7 @@ import {
 } from 'lucide-react';
 
 export type ProductAdminView = 'all' | 'pricing' | 'active' | 'inactive';
+const newStorefrontGroupOption = '__create_storefront_group__';
 
 const categoryLabels: Record<ProductCategory, string> = {
   pulsa: 'Pulsa',
@@ -178,6 +192,9 @@ function ProviderDetailPanel({
   const [productDraft, setProductDraft] = useState<{
     variant: string;
     vendorLabel: string;
+    storefrontGroup: string;
+    storefrontGroupMode: 'saved' | 'new';
+    promoBadge: string;
     sellPriceUser: number;
     sellPriceAgent: number;
     compareAtPrice: number | null;
@@ -263,6 +280,11 @@ function ProviderDetailPanel({
     return [...names].sort((a, b) => a.localeCompare(b, 'id'));
   }, [allProducts, group.category, group.operator, selectedSourceOperator, settings.aliasOf]);
 
+  const storefrontGroupOptions = useMemo(
+    () => getStorefrontGroupOptions(allProducts, group.category),
+    [allProducts, group.category],
+  );
+
   // A TokoVoucher provider can hold 600+ rows; rendering them all made the
   // panel crawl, so the table pages through them.
   const productsPerPage = 50;
@@ -275,12 +297,19 @@ function ProviderDetailPanel({
   const storefrontOperator = !isLoadingSettings && !settingsLoadError && settings.aliasOf?.trim()
     ? settings.aliasOf.trim()
     : selectedSourceOperator;
+  const groupHasManualName = group.allProducts.some((product) => product.storefrontGroup?.trim());
+  const displayedGroupName = groupHasManualName ? group.operator : storefrontOperator;
   const previewProducts = allProducts.filter((product) => {
     if (product.category !== group.category || product.status !== 'active') return false;
-    const mappedOperator = sameProviderName(product.operator, selectedSourceOperator)
-      ? storefrontOperator
-      : resolveProviderName(product.operator, product.providerAlias);
-    return sameProviderName(mappedOperator, storefrontOperator);
+    const aliasOf = sameProviderName(product.operator, selectedSourceOperator)
+      ? settings.aliasOf
+      : product.providerAlias;
+    const mappedOperator = resolveProviderName(
+      product.operator,
+      aliasOf,
+      product.storefrontGroup,
+    );
+    return sameProviderName(mappedOperator, displayedGroupName);
   });
   const previewVendorSummary = [...new Set(previewProducts.map((product) => product.vendor))]
     .map((vendor) => ({
@@ -410,6 +439,9 @@ function ProviderDetailPanel({
     setProductDraft({
       variant: product.variant ?? '',
       vendorLabel: product.vendorLabel ?? '',
+      storefrontGroup: product.storefrontGroup ?? '',
+      storefrontGroupMode: 'saved',
+      promoBadge: product.promoBadge ?? '',
       sellPriceUser: product.sellPriceUser,
       sellPriceAgent: product.sellPriceAgent,
       compareAtPrice: product.compareAtPrice ?? null,
@@ -419,6 +451,10 @@ function ProviderDetailPanel({
 
   const saveProductEdit = async (product: Product) => {
     if (!productDraft) return;
+    if (productDraft.storefrontGroupMode === 'new' && !productDraft.storefrontGroup.trim()) {
+      addToast('Nama kelompok diperlukan', 'Isi nama kelompok baru sebelum menyimpan produk.', 'error');
+      return;
+    }
     setPendingProductIds((current) => new Set(current).add(product.id));
     try {
       // An empty type hands the product back to the vendor sync.
@@ -427,6 +463,8 @@ function ProviderDetailPanel({
       const saved = await updateProduct(product.id, {
         variant: variant || null,
         vendorLabel: vendorLabel || null,
+        storefrontGroup: productDraft.storefrontGroup.trim() || null,
+        promoBadge: productDraft.promoBadge.trim() || null,
         sellPriceUser: productDraft.sellPriceUser,
         sellPriceAgent: productDraft.sellPriceAgent,
         compareAtPrice: productDraft.compareAtPrice,
@@ -476,7 +514,7 @@ function ProviderDetailPanel({
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
               Pratinjau etalase · {categoryLabels[group.category]}
             </p>
-            <h2 className="mt-1 text-lg font-semibold text-slate-950">{storefrontOperator}</h2>
+            <h2 className="mt-1 text-lg font-semibold text-slate-950">{displayedGroupName}</h2>
             <p className="mt-1 text-sm text-slate-600">
               {previewProducts.length} produk aktif akan tampil dalam kelompok ini.
             </p>
@@ -642,7 +680,8 @@ function ProviderDetailPanel({
             <p className="text-xs text-slate-500">
               Sumber: <span className="font-medium text-slate-700">{selectedSourceOperator}</span>
               {selectedSource && ` · ${selectedSource.vendors.join(' / ')}`}. Pilih nama yang sama
-              untuk menggabungkan operator hanya di kategori ini. Produk tiap vendor tetap terpisah.
+              untuk menggabungkan operator hanya di kategori ini. Nama kelompok manual per produk
+              akan selalu diutamakan; produk tiap vendor tetap terpisah.
             </p>
           </div>
           {settingsLoadError && (
@@ -700,7 +739,7 @@ function ProviderDetailPanel({
         <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="font-semibold text-slate-900">Daftar Produk ({statusProducts.length})</h2>
-            <p className="text-xs text-slate-500">Pilih Edit untuk mengubah ikon, harga, markup, harga coret, dan status produk langsung di baris.</p>
+            <p className="text-xs text-slate-500">Pilih Edit untuk mengubah ikon, harga, markup, harga coret, status, kelompok etalase, dan badge produk langsung di baris.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Input
@@ -899,6 +938,68 @@ function ProviderDetailPanel({
                               <span className="block text-[10px] text-slate-500">
                                 Kosongkan agar tipe diambil ulang dari sync vendor.
                               </span>
+                              <select
+                                aria-label={`Kelompok etalase ${product.name}`}
+                                value={productDraft.storefrontGroupMode === 'new'
+                                  ? newStorefrontGroupOption
+                                  : productDraft.storefrontGroup
+                                    ? `saved:${productDraft.storefrontGroup}`
+                                    : ''}
+                                onChange={(event) => {
+                                  const value = event.currentTarget.value;
+                                  if (value === newStorefrontGroupOption) {
+                                    setProductDraft((current) => current
+                                      ? { ...current, storefrontGroupMode: 'new', storefrontGroup: '' }
+                                      : current);
+                                    return;
+                                  }
+                                  setProductDraft((current) => current
+                                    ? {
+                                        ...current,
+                                        storefrontGroupMode: 'saved',
+                                        storefrontGroup: value.startsWith('saved:')
+                                          ? value.slice('saved:'.length)
+                                          : '',
+                                      }
+                                    : current);
+                                }}
+                                className="h-8 w-56 rounded-md border border-slate-200 bg-white px-2 text-xs"
+                              >
+                                <option value="">Default (operator/alias)</option>
+                                {storefrontGroupOptions.map((label) => (
+                                  <option key={label} value={`saved:${label}`}>{label}</option>
+                                ))}
+                                <option value={newStorefrontGroupOption}>+ Buat kelompok baru</option>
+                              </select>
+                              {productDraft.storefrontGroupMode === 'new' ? (
+                                <Input
+                                  aria-label={`Nama kelompok baru untuk ${product.name}`}
+                                  placeholder="Nama kelompok baru (mis. PLN Promo)"
+                                  maxLength={60}
+                                  value={productDraft.storefrontGroup}
+                                  onChange={(event) => setProductDraft((current) => current
+                                    ? { ...current, storefrontGroup: event.target.value }
+                                    : current)}
+                                  className="h-8 w-56 text-xs"
+                                />
+                              ) : (
+                                <span className="block max-w-56 text-[10px] text-slate-500">
+                                  Pilih grup tersimpan atau buat grup baru. Produk tanpa grup kustom tetap pada grup default.
+                                </span>
+                              )}
+                              <Input
+                                aria-label={`Badge promo ${product.name}`}
+                                placeholder="Badge di kartu (mis. PROMO)"
+                                maxLength={24}
+                                value={productDraft.promoBadge}
+                                onChange={(event) => setProductDraft((current) => current
+                                  ? { ...current, promoBadge: event.target.value }
+                                  : current)}
+                                className="h-8 w-44 text-xs"
+                              />
+                              <span className="block text-[10px] text-slate-500">
+                                Hanya tampilan; tidak mengubah harga. Kosongkan untuk menyembunyikan badge.
+                              </span>
                             </div>
                           ) : (
                             <div className="mt-1 flex flex-wrap items-center gap-1">
@@ -913,6 +1014,16 @@ function ProviderDetailPanel({
                                 }`}>
                                   {product.variant}
                                   {product.variantSource === 'manual' ? ' · manual' : ''}
+                                </span>
+                              )}
+                              {product.storefrontGroup && (
+                                <span className="inline-flex rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-700">
+                                  Grup: {product.storefrontGroup}
+                                </span>
+                              )}
+                              {product.promoBadge && (
+                                <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-amber-800">
+                                  Badge: {product.promoBadge}
                                 </span>
                               )}
                             </div>
@@ -1172,7 +1283,10 @@ export default function ProductManagementPanel({
     () => new Set(),
   );
   const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null);
-  const { bulkUpdateProductStatus } = usePPOB();
+  const { bulkUpdateProductStatus, addToast, refreshProducts } = usePPOB();
+  const [groupIconTarget, setGroupIconTarget] = useState<ProviderGroup | null>(null);
+  const [isUploadingGroupIcon, setIsUploadingGroupIcon] = useState(false);
+  const groupIconFileInput = useRef<HTMLInputElement>(null);
 
   // Everything below counts only the selected vendor, so a TokoVoucher filter
   // never shows Digiflazz totals.
@@ -1241,7 +1355,12 @@ export default function ProductManagementPanel({
   const { providerGroups, groupTotal } = useMemo(() => {
     const membersByKey = new Map<string, Product[]>();
     for (const product of vendorProducts) {
-      const key = providerGroupKey(product.category, product.operator, product.providerAlias);
+      const key = providerGroupKey(
+        product.category,
+        product.operator,
+        product.providerAlias,
+        product.storefrontGroup,
+      );
       const members = membersByKey.get(key);
       if (members) members.push(product);
       else membersByKey.set(key, [product]);
@@ -1249,7 +1368,12 @@ export default function ProductManagementPanel({
 
     const groups = new Map<string, ProviderGroup>();
     for (const product of visibleProducts) {
-      const key = providerGroupKey(product.category, product.operator, product.providerAlias);
+      const key = providerGroupKey(
+        product.category,
+        product.operator,
+        product.providerAlias,
+        product.storefrontGroup,
+      );
       const existing = groups.get(key);
       if (existing) {
         existing.products.push(product);
@@ -1260,7 +1384,11 @@ export default function ProductManagementPanel({
       groups.set(key, {
         key,
         category: product.category,
-        operator: resolveProviderName(product.operator, product.providerAlias),
+        operator: resolveProviderName(
+          product.operator,
+          product.providerAlias,
+          product.storefrontGroup,
+        ),
         vendors: [product.vendor],
         products: [product],
         allProducts,
@@ -1343,6 +1471,57 @@ export default function ProductManagementPanel({
     }
   };
 
+  const uploadGroupIcon = async (file?: File) => {
+    if (!file || !groupIconTarget) return;
+    const operators = [...new Set(
+      groupIconTarget.allProducts.map((product) => product.operator.trim()).filter(Boolean),
+    )];
+    if (operators.length === 0) {
+      addToast('Ikon gagal diunggah', 'Grup provider tidak memiliki sumber operator.', 'error');
+      return;
+    }
+
+    setIsUploadingGroupIcon(true);
+    try {
+      const form = new FormData();
+      form.set('category', groupIconTarget.category);
+      form.set('operators', JSON.stringify(operators));
+      form.set('kind', 'icon');
+      form.set('file', file);
+      const response = await fetch('/api/admin/product-providers/assets', {
+        method: 'POST',
+        body: form,
+      });
+      const body = await response.json();
+      if (!response.ok || typeof body.assetUrl !== 'string') {
+        throw new Error(body.error ?? 'Ikon provider gagal diunggah.');
+      }
+      setGroupIconTarget(null);
+      try {
+        await refreshProducts();
+      } catch (error) {
+        addToast(
+          'Ikon tersimpan, katalog belum diperbarui',
+          error instanceof Error ? error.message : 'Muat ulang dashboard untuk melihat ikon terbaru.',
+          'warning',
+        );
+      }
+      addToast(
+        'Ikon provider diperbarui',
+        `Ikon diterapkan ke ${operators.length} sumber produk di etalase.`,
+        'success',
+      );
+    } catch (error) {
+      addToast(
+        'Ikon gagal diunggah',
+        error instanceof Error ? error.message : 'Silakan coba lagi.',
+        'error',
+      );
+    } finally {
+      setIsUploadingGroupIcon(false);
+    }
+  };
+
   const details = viewDetails[view];
   const selectedGroup = providerGroups.find((group) => group.key === selectedGroupKey);
   const selectedGroupSourceKey = selectedGroup
@@ -1365,37 +1544,6 @@ export default function ProductManagementPanel({
 
   return (
     <div className="space-y-5">
-      <Card className="border-border bg-card">
-        <CardContent className="space-y-3 p-4">
-          <div>
-            <p className="text-sm font-semibold text-slate-900">Atur produk yang masuk etalase</p>
-            <p className="mt-1 text-xs leading-relaxed text-slate-600">
-              Sinkronisasi menambahkan produk sebagai nonaktif. Pilih kategori dan vendor, buka operator,
-              samakan nama etalase untuk layanan yang sama, lalu aktifkan hanya produk yang ingin dijual.
-              Kedua vendor boleh tampil bersama; sumber penawaran tetap ditandai.
-            </p>
-          </div>
-          <div className="grid gap-2 text-xs sm:grid-cols-3">
-            <div className="rounded-lg border border-border bg-muted p-3">
-              <span className="font-semibold text-slate-700">1 · Pilih sumber</span>
-              <p className="mt-1 text-slate-600">Filter Digiflazz, TokoVoucher, atau semua vendor.</p>
-            </div>
-            <div className="rounded-lg border border-border bg-muted p-3">
-              <span className="font-semibold text-slate-700">2 · Petakan nama</span>
-              <p className="mt-1 text-slate-600">Gabungkan nama operator dalam kategori yang sama.</p>
-            </div>
-            <div className="rounded-lg border border-border bg-muted p-3">
-              <span className="font-semibold text-slate-700">3 · Pilih isi etalase</span>
-              <p className="mt-1 text-slate-600">Aktifkan produk per sumber; produk aktif dapat dibeli.</p>
-            </div>
-          </div>
-          <p className="text-[11px] text-slate-500">
-            Di Integrasi, “Aktif” mengatur pemakaian vendor dan “Tampil” mengatur visibilitas di dashboard admin.
-            Status produk aktif di sini yang menentukan produk tampil dan dapat dibeli di etalase.
-          </p>
-        </CardContent>
-      </Card>
-
       <div className="grid gap-3 sm:grid-cols-3">
         {([
           ['Total produk', counts.all, 'text-slate-950'],
@@ -1658,6 +1806,9 @@ export default function ProductManagementPanel({
                   const allActive = activeCount === group.allProducts.length;
                   const someActive = activeCount > 0;
                   const pending = group.allProducts.some((product) => pendingProductIds.has(product.id));
+                  const groupIconUrl = group.allProducts.find(
+                    (product) => product.providerIconUrl,
+                  )?.providerIconUrl;
                   return (
                     <section key={group.key} className="border-t border-slate-200 first:border-t-0">
                       <div className="grid min-h-14 grid-cols-[minmax(0,1fr)_5rem_4rem] items-center gap-3 px-4 py-2 sm:grid-cols-[3rem_minmax(0,1fr)_7rem_5rem]">
@@ -1665,9 +1816,25 @@ export default function ProductManagementPanel({
                           {currentGroupPage * groupsPerPage + index + 1}
                         </span>
                         <div className="flex min-w-0 items-center gap-3">
-                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-sky-50 text-[10px] font-bold uppercase text-sky-700">
-                            {group.operator.slice(0, 2)}
-                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setGroupIconTarget(group)}
+                            disabled={isUploadingGroupIcon}
+                            aria-label={`Ganti ikon ${categoryLabels[group.category]} ${group.operator}`}
+                            title="Ganti ikon sumber operator; perubahan berlaku pada semua kelompok etalase"
+                            className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md bg-sky-50 text-[10px] font-bold uppercase text-sky-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-600 disabled:opacity-60"
+                          >
+                            {groupIconUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={groupIconUrl}
+                                alt=""
+                                className="h-full w-full object-contain"
+                              />
+                            ) : (
+                              group.operator.slice(0, 2)
+                            )}
+                          </button>
                           <div className="min-w-0">
                             <h3 className="truncate text-sm font-semibold text-slate-900">
                               {categoryLabels[group.category]} {group.operator}
@@ -1750,6 +1917,56 @@ export default function ProductManagementPanel({
           )}
         </CardContent>
       </Card>
+      <Dialog
+        open={groupIconTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !isUploadingGroupIcon) setGroupIconTarget(null);
+        }}
+      >
+        <DialogContent onClose={() => {
+          if (!isUploadingGroupIcon) setGroupIconTarget(null);
+        }} role="dialog" aria-modal="true" aria-labelledby="provider-group-icon-title">
+          <DialogHeader>
+            <DialogTitle id="provider-group-icon-title">Ganti ikon provider?</DialogTitle>
+            <DialogDescription id="provider-group-icon-description">
+              Ikon disimpan per sumber operator dan berlaku untuk seluruh produk dari sumber itu,
+              termasuk produk yang ditempatkan di kelompok etalase lain. Grup terpilih:{' '}
+              {groupIconTarget
+                ? `${categoryLabels[groupIconTarget.category]} ${groupIconTarget.operator}`
+                : ''}{' '}
+              Pilih gambar PNG, JPEG, atau WebP dengan ukuran maksimal 1 MB.
+            </DialogDescription>
+          </DialogHeader>
+          <input
+            ref={groupIconFileInput}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            className="sr-only"
+            aria-label="Pilih file ikon provider"
+            onChange={(event) => {
+              void uploadGroupIcon(event.target.files?.[0]);
+              event.currentTarget.value = '';
+            }}
+          />
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isUploadingGroupIcon}
+              onClick={() => setGroupIconTarget(null)}
+            >
+              Batal
+            </Button>
+            <Button
+              type="button"
+              disabled={isUploadingGroupIcon}
+              onClick={() => groupIconFileInput.current?.click()}
+            >
+              {isUploadingGroupIcon ? 'Mengunggah…' : 'Ya, pilih ikon'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

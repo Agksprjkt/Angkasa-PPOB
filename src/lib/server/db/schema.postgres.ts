@@ -159,6 +159,9 @@ export const products = pgTable(
     // Free-text source marker shown on the storefront, e.g. "Server 1". Empty
     // means the vendor name is used instead.
     vendorLabel: text('vendorLabel'),
+    // Per-product storefront grouping; does not change the provider operator.
+    storefrontGroup: text('storefrontGroup'),
+    promoBadge: text('promoBadge'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getAuth } from '@/lib/server/auth';
+import { getAuth, refreshAuthConfig } from '@/lib/server/auth';
 import {
   getSystemConfig,
   getSystemConfigSnapshot,
@@ -10,6 +10,8 @@ import { parseSystemConfig, type SystemConfig } from '@/lib/system-config-core';
 import { testStorageConnection } from '@/lib/server/storage';
 import { pingRedis } from '@/lib/server/redis';
 import { databaseMode } from '@/lib/server/db/database-mode';
+import { readSystemConfig } from '@/lib/server/system-config-store';
+import { normalizeAuthBaseUrl, parseFrontendOrigins } from '@/lib/frontend-integration';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -128,7 +130,14 @@ export async function PUT(request: NextRequest) {
 
   try {
     const current = getSystemConfig();
+    const stored = readSystemConfig();
     const next = parseSystemConfig(body.config);
+    if (process.env.BETTER_AUTH_URL?.trim()) {
+      next.auth.baseUrl = stored.auth.baseUrl;
+    }
+    if (process.env.BETTER_AUTH_TRUSTED_ORIGINS?.trim()) {
+      next.auth.trustedOrigins = stored.auth.trustedOrigins;
+    }
     // Empty secret fields mean "keep the stored value"; the UI cannot echo them back.
     if (!next.database.password) next.database.password = current.database.password;
     if (!next.database.neon.apiKey) next.database.neon.apiKey = current.database.neon.apiKey;
@@ -145,6 +154,12 @@ export async function PUT(request: NextRequest) {
 
     validateConfig(next);
     saveSystemConfig(next);
+    if (
+      !process.env.BETTER_AUTH_URL?.trim() &&
+      next.auth.baseUrl !== stored.auth.baseUrl
+    ) {
+      refreshAuthConfig();
+    }
     clearNeonCache();
     return NextResponse.json(snapshotResponse(false));
   } catch (error) {
@@ -168,7 +183,21 @@ function clearSecret(config: SystemConfig, field: string) {
 }
 
 function validateConfig(config: SystemConfig) {
-  const { database, storage, redis } = config;
+  const { auth, database, storage, redis } = config;
+  if (!process.env.BETTER_AUTH_URL?.trim()) {
+    try {
+      auth.baseUrl = normalizeAuthBaseUrl(auth.baseUrl);
+    } catch {
+      throw new Error('INVALID_AUTH_BASE_URL');
+    }
+  }
+  if (!process.env.BETTER_AUTH_TRUSTED_ORIGINS?.trim()) {
+    try {
+      auth.trustedOrigins = parseFrontendOrigins(auth.trustedOrigins.join('\n'));
+    } catch {
+      throw new Error('INVALID_FRONTEND_ORIGINS');
+    }
+  }
   if (!/^[A-Za-z_][A-Za-z0-9_]{0,62}$/.test(database.schema)) {
     throw new Error('INVALID_DATABASE_SCHEMA');
   }

@@ -59,14 +59,39 @@ export type StorefrontConfig = {
   enabled: boolean;
 };
 
+export type AuthConfig = {
+  baseUrl: string;
+  trustedOrigins: string[];
+};
+
 export type SystemConfig = {
+  auth: AuthConfig;
   database: DatabaseConfig;
   redis: RedisConfig;
   storage: StorageConfig;
   storefront: StorefrontConfig;
 };
 
+export function resolveAuthSettings(
+  stored: AuthConfig,
+  environmentBaseUrl?: string,
+  environmentOrigins?: string,
+): AuthConfig {
+  const baseUrl = environmentBaseUrl?.trim();
+  const origins = environmentOrigins?.trim();
+  return {
+    baseUrl: baseUrl || stored.baseUrl,
+    trustedOrigins: origins
+      ? origins.split(',').map((origin) => origin.trim()).filter(Boolean)
+      : stored.trustedOrigins,
+  };
+}
+
 export const defaultSystemConfig: SystemConfig = {
+  auth: {
+    baseUrl: 'http://localhost:3000',
+    trustedOrigins: [],
+  },
   database: {
     provider: 'sqlite',
     useBundledContainer: false,
@@ -142,6 +167,7 @@ function record(value: unknown): Record<string, unknown> {
 
 export function parseSystemConfig(raw: unknown): SystemConfig {
   const root = record(raw);
+  const auth = record(root.auth);
   const database = record(root.database);
   const neon = record(database.neon);
   const redis = record(root.redis);
@@ -151,6 +177,16 @@ export function parseSystemConfig(raw: unknown): SystemConfig {
   const defaults = defaultSystemConfig;
 
   return {
+    auth: {
+      baseUrl: text(auth.baseUrl, defaults.auth.baseUrl, 2048),
+      trustedOrigins: Array.isArray(auth.trustedOrigins)
+        ? auth.trustedOrigins
+            .filter((origin): origin is string => typeof origin === 'string')
+            .map((origin) => origin.trim())
+            .filter(Boolean)
+            .slice(0, 32)
+        : [],
+    },
     database: {
       provider: database.provider === 'postgres' ? 'postgres' : 'sqlite',
       useBundledContainer: bool(database.useBundledContainer, false),

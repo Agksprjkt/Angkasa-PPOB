@@ -84,6 +84,9 @@ type SettingsSnapshot = {
     showProducts: boolean;
     showProductsSource: SettingStatus['source'];
     showProductsEditable: boolean;
+    postpaidEnabled: boolean;
+    postpaidEnabledSource: SettingStatus['source'];
+    postpaidEnabledEditable: boolean;
     webhookSecret: SettingStatus;
     webhookUrl: string;
     autoSync: AutoSyncSettings;
@@ -121,6 +124,9 @@ type SettingsSnapshot = {
     showProducts: boolean;
     showProductsSource: SettingStatus['source'];
     showProductsEditable: boolean;
+    postpaidEnabled: boolean;
+    postpaidEnabledSource: SettingStatus['source'];
+    postpaidEnabledEditable: boolean;
     webhookUrl: string;
     autoSync: AutoSyncSettings;
   };
@@ -154,6 +160,7 @@ const sectionSettings: Record<IntegrationSection, string[]> = {
     'digiflazzMode',
     'enableRealTransactions',
     'digiflazzEnabled',
+    'digiflazzPostpaidEnabled',
     'digiflazzWebhookSecret',
   ],
   qrisly: [
@@ -170,6 +177,7 @@ const sectionSettings: Record<IntegrationSection, string[]> = {
     'tokovoucherMode',
     'tokovoucherEnableRealTransactions',
     'tokovoucherEnabled',
+    'tokovoucherPostpaidEnabled',
   ],
 };
 
@@ -368,6 +376,7 @@ export default function IntegrationSettingsPanel({
   const [digiflazzApiKey, setDigiflazzApiKey] = useState('');
   const [digiflazzMode, setDigiflazzMode] = useState('sandbox');
   const [enableRealTransactions, setEnableRealTransactions] = useState(false);
+  const [digiflazzPostpaidEnabled, setDigiflazzPostpaidEnabled] = useState(false);
   const [autoSyncIntervalDays, setAutoSyncIntervalDays] = useState<7 | 14 | 30>(7);
   const [isAutoSyncDialogOpen, setIsAutoSyncDialogOpen] = useState(false);
   const [isSavingAutoSync, setIsSavingAutoSync] = useState(false);
@@ -378,6 +387,7 @@ export default function IntegrationSettingsPanel({
   const [tokovoucherDefaultSignature, setTokovoucherDefaultSignature] = useState('');
   const [tokovoucherMode, setTokovoucherMode] = useState('sandbox');
   const [tokovoucherRealTransactions, setTokovoucherRealTransactions] = useState(false);
+  const [tokovoucherPostpaidEnabled, setTokovoucherPostpaidEnabled] = useState(false);
   const [tokovoucherAutoSyncInterval, setTokovoucherAutoSyncInterval] = useState<7 | 14 | 30>(7);
   const [digiflazzEnabled, setDigiflazzEnabled] = useState(true);
   const [digiflazzShowProducts, setDigiflazzShowProducts] = useState(true);
@@ -409,6 +419,7 @@ export default function IntegrationSettingsPanel({
     skipped: number;
   } | null>(null);
   const [isLoadingPriceList, setIsLoadingPriceList] = useState(false);
+  const [isLoadingPostpaidPriceList, setIsLoadingPostpaidPriceList] = useState(false);
   const [clearSettings, setClearSettings] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [savingSections, setSavingSections] = useState<IntegrationSection[]>([]);
@@ -440,6 +451,7 @@ export default function IntegrationSettingsPanel({
         setDigiflazzUsername(body.digiflazz.username);
         setDigiflazzMode(body.digiflazz.mode || 'sandbox');
         setEnableRealTransactions(body.digiflazz.enableRealTransactions);
+        setDigiflazzPostpaidEnabled(body.digiflazz.postpaidEnabled);
         setAutoSyncIntervalDays(body.digiflazz.autoSync.intervalDays);
         setQrislyQrisId(body.qrisly.qrisId);
         setQrislyMode(body.qrisly.mode || 'sandbox');
@@ -448,6 +460,7 @@ export default function IntegrationSettingsPanel({
         setTokovoucherMemberCode(body.tokovoucher.memberCode);
         setTokovoucherMode(body.tokovoucher.mode || 'sandbox');
         setTokovoucherRealTransactions(body.tokovoucher.enableRealTransactions);
+        setTokovoucherPostpaidEnabled(body.tokovoucher.postpaidEnabled);
         setTokovoucherAutoSyncInterval(body.tokovoucher.autoSync.intervalDays);
         setDigiflazzEnabled(body.digiflazz.enabled);
         setDigiflazzShowProducts(body.digiflazz.showProducts);
@@ -660,6 +673,9 @@ export default function IntegrationSettingsPanel({
       if (snapshot.digiflazz.enableRealTransactionsEditable) {
         values.enableRealTransactions = String(enableRealTransactions);
       }
+      if (snapshot.digiflazz.postpaidEnabledEditable) {
+        values.digiflazzPostpaidEnabled = String(digiflazzPostpaidEnabled);
+      }
       if (snapshot.digiflazz.enabledEditable) {
         values.digiflazzEnabled = String(digiflazzEnabled);
       }
@@ -680,6 +696,9 @@ export default function IntegrationSettingsPanel({
       if (snapshot.tokovoucher.modeEditable) values.tokovoucherMode = tokovoucherMode;
       if (snapshot.tokovoucher.enableRealTransactionsEditable) {
         values.tokovoucherEnableRealTransactions = String(tokovoucherRealTransactions);
+      }
+      if (snapshot.tokovoucher.postpaidEnabledEditable) {
+        values.tokovoucherPostpaidEnabled = String(tokovoucherPostpaidEnabled);
       }
       if (snapshot.tokovoucher.enabledEditable) {
         values.tokovoucherEnabled = String(tokovoucherEnabled);
@@ -828,6 +847,7 @@ export default function IntegrationSettingsPanel({
         updated: number;
         skipped: number;
       };
+
       setTokovoucherPriceList(result);
       addToast(
         'Produk TokoVoucher tersinkron',
@@ -862,6 +882,48 @@ export default function IntegrationSettingsPanel({
       );
     } finally {
       setIsLoadingTokoVoucherPriceList(false);
+    }
+  };
+
+  const handleDigiflazzPostpaidPriceList = async () => {
+    setIsLoadingPostpaidPriceList(true);
+    try {
+      const response = await fetch('/api/admin/digiflazz/price-list?scope=pasca', {
+        method: 'POST',
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(body.detail ?? body.error ?? 'Sinkronisasi produk pascabayar gagal.');
+      }
+      const result = body as {
+        total: number;
+        synced: number;
+        created: number;
+        updated: number;
+        skipped: number;
+      };
+      addToast(
+        'Produk pascabayar Digiflazz tersinkron',
+        `${result.created} produk baru, ${result.updated} diperbarui, ${result.skipped} dilewati. Produk baru berstatus nonaktif.`,
+        'success',
+      );
+      try {
+        await refreshProducts();
+      } catch (error) {
+        addToast(
+          'Katalog belum diperbarui',
+          error instanceof Error ? error.message : 'Muat ulang dashboard untuk melihat produk.',
+          'warning',
+        );
+      }
+    } catch (error) {
+      addToast(
+        'Sync pascabayar gagal',
+        error instanceof Error ? error.message : 'Silakan coba kembali.',
+        'error',
+      );
+    } finally {
+      setIsLoadingPostpaidPriceList(false);
     }
   };
 
@@ -1283,21 +1345,49 @@ export default function IntegrationSettingsPanel({
             />
           </div>
 
+          <div className="flex items-start justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+            <div>
+              <p className="font-medium">Izinkan pembayaran tagihan (pascabayar)</p>
+              <p className="mt-0.5 text-xs">
+                Sakelar terpisah dari prabayar; aktifkan hanya jika akun Digiflazz Anda mendukung pascabayar.
+              </p>
+              <p className="mt-1 text-xs text-slate-600">
+                {sourceText(snapshot.digiflazz.postpaidEnabledSource)}
+              </p>
+            </div>
+            <Switch
+              checked={digiflazzPostpaidEnabled}
+              onCheckedChange={setDigiflazzPostpaidEnabled}
+              disabled={!snapshot.digiflazz.postpaidEnabledEditable}
+              aria-label="Izinkan pembayaran tagihan Digiflazz"
+            />
+          </div>
+
           <div className="space-y-3 rounded-lg border border-slate-200 p-4">
             <div>
               <h4 className="text-sm font-semibold">Daftar produk Digiflazz</h4>
               <p className="mt-1 text-xs text-slate-500">
-                Sinkronkan produk prepaid dari Digiflazz ke database. Produk baru masuk nonaktif agar dapat diatur sebelum dijual.
+                Sinkronisasi prepaid dan pascabayar terpisah. Produk baru masuk nonaktif agar dapat diatur sebelum dijual.
               </p>
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleDigiflazzPriceList}
-              disabled={isLoadingPriceList || !canFetchDigiflazz}
-            >
-              {isLoadingPriceList ? 'Menyinkronkan…' : 'Sinkronkan produk'}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleDigiflazzPriceList}
+                disabled={isLoadingPriceList || isLoadingPostpaidPriceList || !canFetchDigiflazz}
+              >
+                {isLoadingPriceList ? 'Menyinkronkan…' : 'Sinkronkan produk prepaid'}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleDigiflazzPostpaidPriceList}
+                disabled={isLoadingPriceList || isLoadingPostpaidPriceList || !canFetchDigiflazz}
+              >
+                {isLoadingPostpaidPriceList ? 'Menyinkronkan…' : 'Sinkronkan produk pascabayar'}
+              </Button>
+            </div>
             {!canFetchDigiflazz && (
               <p className="text-xs text-amber-700">
                 Simpan username dan API key untuk mode terpilih terlebih dahulu.
@@ -1544,6 +1634,23 @@ export default function IntegrationSettingsPanel({
                 Sakelar ini terpisah dari Digiflazz. Mengaktifkan salah satu tidak
                 mengaktifkan yang lain.
               </p>
+              <div className="flex items-start justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                <div>
+                  <p className="font-medium">Izinkan pembayaran tagihan (pascabayar)</p>
+                  <p className="mt-0.5 text-xs">
+                    Aktifkan hanya jika akun TokoVoucher Anda mendukung pascabayar.
+                  </p>
+                  <p className="mt-1 text-xs text-slate-600">
+                    {sourceText(snapshot.tokovoucher.postpaidEnabledSource)}
+                  </p>
+                </div>
+                <Switch
+                  checked={tokovoucherPostpaidEnabled}
+                  onCheckedChange={setTokovoucherPostpaidEnabled}
+                  disabled={!snapshot.tokovoucher.postpaidEnabledEditable}
+                  aria-label="Izinkan pembayaran tagihan TokoVoucher"
+                />
+              </div>
             </CardContent>
             <CardContent className="space-y-4 p-0">
           <div className="rounded-lg border border-slate-200 p-3">

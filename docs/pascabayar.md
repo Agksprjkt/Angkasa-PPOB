@@ -97,16 +97,21 @@ dengan pemotongan saldo.
 | `DIGIFLAZZ_POSTPAID_ENABLED` | `false` | izinkan cek tagihan Digiflazz |
 | `TOKOVOUCHER_POSTPAID_ENABLED` | `false` | izinkan cek tagihan TokoVoucher |
 
-Selama false, `POST /api/bills/inquiry` menjawab 503 `BILL_PROVIDER_UNAVAILABLE`.
-Ini terpisah dari `ENABLE_REAL_TRANSACTIONS` supaya mengaktifkan prabayar tidak
-otomatis mengizinkan pembayaran tagihan nyata.
+Atur melalui switch pascabayar masing-masing vendor di **Admin → Integrasi**.
+Jika environment variable di atas diisi, nilainya mengesampingkan dashboard.
+Selama false, `POST /api/bills/inquiry` menjawab 503
+`BILL_PROVIDER_UNAVAILABLE`. Ini terpisah dari `ENABLE_REAL_TRANSACTIONS` supaya
+mengaktifkan prabayar tidak otomatis mengizinkan pembayaran tagihan nyata.
 
 ## Sync produk pascabayar
 
 Produk pascabayar Digiflazz ada di price list terpisah (`cmd: "pasca"`).
-`POST /api/admin/digiflazz/price-list?scope=pasca` menjalankan
-`syncDigiflazzPostpaidProducts()`. Semua baris masuk `category = 'tagihan'` dan
-status `inactive` seperti hasil sync lainnya — admin yang mengaktifkan.
+Di **Admin → Integrasi → Digiflazz**, gunakan tombol **Sinkronkan produk
+pascabayar**; ini menjalankan `POST /api/admin/digiflazz/price-list?scope=pasca`
+dan `syncDigiflazzPostpaidProducts()`. Sinkronisasi prabayar tidak menyertakan
+daftar pascabayar. Semua baris masuk `category = 'tagihan'` dan status
+`inactive` seperti hasil sync lainnya — admin perlu mengaktifkan produk yang
+akan dijual dari menu Kelola Produk.
 
 ## Batasan sandbox (terverifikasi)
 

@@ -56,6 +56,11 @@ export interface Product {
   // Operator name this product's provider is shown as, when an admin merged two
   // vendors into one storefront card. Empty = use `operator`.
   providerAlias?: string | null;
+  // Optional per-product storefront group, which takes precedence over the
+  // provider alias without changing the source operator used for fulfillment.
+  storefrontGroup?: string | null;
+  // Optional short label displayed above this product's storefront card.
+  promoBadge?: string | null;
   status: 'active' | 'inactive';
   vendor: ProductVendor;
   // Storefront source marker, e.g. "Server 1". Empty = show the vendor name.

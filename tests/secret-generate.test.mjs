@@ -36,6 +36,7 @@ test('the auth secret is never stored by the dashboard', () => {
   assert.equal(isStoredSecretTarget('betterAuthSecret'), false);
   assert.equal(isStoredSecretTarget('digiflazzWebhookSecret'), true);
   assert.equal(isStoredSecretTarget('tokovoucherWebhookSecret'), true);
+  assert.equal(isStoredSecretTarget('frontendApiSecret'), true);
 });
 
 test('a short value is rejected as weak', () => {

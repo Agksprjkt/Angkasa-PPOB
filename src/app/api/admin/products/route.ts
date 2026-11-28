@@ -21,6 +21,14 @@ const categories: ProductCategory[] = [
   'game',
 ];
 
+const maxStorefrontGroupLength = 60;
+const maxPromoBadgeLength = 24;
+
+function normalizeOptionalLabel(value: string | null | undefined) {
+  const normalized = value?.trim();
+  return normalized || null;
+}
+
 function isProduct(value: unknown): value is Omit<Product, 'id'> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return false;
@@ -40,6 +48,8 @@ function isProduct(value: unknown): value is Omit<Product, 'id'> {
     'status',
     'vendor',
     'vendorLabel',
+    'storefrontGroup',
+    'promoBadge',
   ]);
   if (Object.keys(product).some((key) => !allowedFields.has(key))) return false;
   return (
@@ -59,6 +69,14 @@ function isProduct(value: unknown): value is Omit<Product, 'id'> {
     (product.vendorLabel === undefined ||
       product.vendorLabel === null ||
       (typeof product.vendorLabel === 'string' && product.vendorLabel.trim().length <= 40)) &&
+    (product.storefrontGroup === undefined ||
+      product.storefrontGroup === null ||
+      (typeof product.storefrontGroup === 'string' &&
+        product.storefrontGroup.length <= maxStorefrontGroupLength)) &&
+    (product.promoBadge === undefined ||
+      product.promoBadge === null ||
+      (typeof product.promoBadge === 'string' &&
+        product.promoBadge.length <= maxPromoBadgeLength)) &&
     typeof product.description === 'string' &&
     Number.isSafeInteger(product.basePrice) &&
     Number.isSafeInteger(product.sellPriceUser) &&
@@ -103,6 +121,7 @@ export async function GET(request: NextRequest) {
         .select({
           category: productProviderSettings.category,
           operator: productProviderSettings.operator,
+          iconUrl: productProviderSettings.iconUrl,
           aliasOf: productProviderSettings.aliasOf,
         })
         .from(productProviderSettings),
@@ -116,9 +135,18 @@ export async function GET(request: NextRequest) {
           provider.aliasOf!.trim(),
         ]),
     );
+    const iconByName = new Map(
+      providers.map((provider) => [
+        `${provider.category}:${provider.operator.toLocaleLowerCase('id-ID')}`,
+        provider.iconUrl,
+      ]),
+    );
     return NextResponse.json({
       products: rows.map((product) => ({
         ...product,
+        providerIconUrl:
+          iconByName.get(`${product.category}:${product.operator.toLocaleLowerCase('id-ID')}`) ??
+          null,
         providerAlias:
           aliasByName.get(`${product.category}:${product.operator.toLocaleLowerCase('id-ID')}`) ??
           null,
@@ -151,7 +179,12 @@ export async function POST(request: NextRequest) {
   try {
     const [product] = await getDatabase()
       .insert(products)
-      .values({ ...payload, id: randomUUID() })
+      .values({
+        ...payload,
+        id: randomUUID(),
+        storefrontGroup: normalizeOptionalLabel(payload.storefrontGroup),
+        promoBadge: normalizeOptionalLabel(payload.promoBadge),
+      })
       .returning();
     await invalidateCatalog();
     return NextResponse.json({ product }, { status: 201 });
@@ -251,7 +284,15 @@ export async function PATCH(request: NextRequest) {
       'status',
       'vendor',
       'vendorLabel',
+      'storefrontGroup',
+      'promoBadge',
     ]);
+    const normalizedUpdates = { ...updates };
+    for (const field of ['storefrontGroup', 'promoBadge'] as const) {
+      if (typeof normalizedUpdates[field] === 'string') {
+        normalizedUpdates[field] = normalizeOptionalLabel(normalizedUpdates[field]);
+      }
+    }
     const currentProduct = {
       vendorCode: existing.vendorCode,
       name: existing.name,
@@ -266,11 +307,13 @@ export async function PATCH(request: NextRequest) {
       status: existing.status,
       vendor: existing.vendor,
       vendorLabel: existing.vendorLabel,
+      storefrontGroup: existing.storefrontGroup,
+      promoBadge: existing.promoBadge,
     };
     if (
       Object.keys(updates).length === 0 ||
       Object.keys(updates).some((key) => !allowedFields.has(key)) ||
-      !isProduct({ ...currentProduct, ...updates })
+      !isProduct({ ...currentProduct, ...normalizedUpdates })
     ) {
       return NextResponse.json({ error: 'INVALID_PRODUCT_UPDATE' }, { status: 400 });
     }
@@ -290,7 +333,7 @@ export async function PATCH(request: NextRequest) {
 
     const [product] = await db
       .update(products)
-      .set({ ...updates, ...variantUpdate, updatedAt: new Date() })
+      .set({ ...normalizedUpdates, ...variantUpdate, updatedAt: new Date() })
       .where(eq(products.id, payload.id))
       .returning();
     if (!product) {

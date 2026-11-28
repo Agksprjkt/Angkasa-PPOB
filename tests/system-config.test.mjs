@@ -11,6 +11,7 @@ import {
   defaultSystemConfig,
   isNeonEndpoint,
   resolveDatabaseUrls,
+  resolveAuthSettings,
 } from '../src/lib/system-config-core.ts';
 
 // Mirrors the encrypted field list in system-config-store.ts. Each path must
@@ -70,6 +71,39 @@ test('parseSystemConfig falls back to defaults for unknown values', () => {
   assert.equal(config.database.poolMax, 10);
   assert.equal(config.storage.driver, 'local');
   assert.equal(config.storage.s3.forcePathStyle, true);
+});
+
+test('parseSystemConfig defaults and reads Better Auth frontend configuration', () => {
+  assert.equal(defaultSystemConfig.auth.baseUrl, 'http://localhost:3000');
+  assert.deepEqual(defaultSystemConfig.auth.trustedOrigins, []);
+
+  const config = parseSystemConfig({
+    auth: {
+      baseUrl: 'https://api.example.com',
+      trustedOrigins: [' https://shop.example.com ', 42, ''],
+    },
+  });
+  assert.equal(config.auth.baseUrl, 'https://api.example.com');
+  assert.deepEqual(config.auth.trustedOrigins, ['https://shop.example.com']);
+});
+
+test('Better Auth environment values override dashboard values only when non-empty', () => {
+  const stored = {
+    baseUrl: 'https://dashboard.example.com',
+    trustedOrigins: ['https://shop.example.com'],
+  };
+  assert.deepEqual(
+    resolveAuthSettings(
+      stored,
+      'https://env.example.com',
+      'https://frontend.example.com, http://localhost:3001',
+    ),
+    {
+      baseUrl: 'https://env.example.com',
+      trustedOrigins: ['https://frontend.example.com', 'http://localhost:3001'],
+    },
+  );
+  assert.deepEqual(resolveAuthSettings(stored, ' ', ''), stored);
 });
 
 test('parseSystemConfig keeps valid dashboard values', () => {

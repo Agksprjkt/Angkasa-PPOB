@@ -893,7 +893,7 @@ export function PPOBProvider({ children }: { children: React.ReactNode }) {
         userId: sessionUserId,
         role: sessionRole,
         products: (previous?.products ?? []).map((product) =>
-          product.id === id ? savedProduct : product,
+          product.id === id ? { ...product, ...savedProduct } : product,
         ),
       }));
       addToast('Produk Diperbarui', 'Data produk tersimpan di database.', 'success');

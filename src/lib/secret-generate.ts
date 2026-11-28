@@ -5,6 +5,7 @@ export const generatedSecretBytes = 32;
 export const secretTargets = [
   'digiflazzWebhookSecret',
   'tokovoucherWebhookSecret',
+  'frontendApiSecret',
   'betterAuthSecret',
 ] as const;
 
@@ -15,6 +16,7 @@ export type SecretTarget = (typeof secretTargets)[number];
 export const storedSecretTargets: readonly SecretTarget[] = [
   'digiflazzWebhookSecret',
   'tokovoucherWebhookSecret',
+  'frontendApiSecret',
 ];
 
 export function isSecretTarget(value: unknown): value is SecretTarget {

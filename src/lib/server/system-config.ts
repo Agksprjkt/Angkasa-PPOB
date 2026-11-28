@@ -3,6 +3,7 @@ import 'server-only';
 import {
   defaultSystemConfig,
   parseSystemConfig,
+  resolveAuthSettings,
   type DatabaseConfig,
   type SystemConfig,
 } from '@/lib/system-config-core';
@@ -13,6 +14,8 @@ export type SystemConfigSource = 'environment' | 'dashboard';
 export type SystemConfigSnapshot = {
   config: SystemConfig;
   sources: {
+    authBaseUrl: SystemConfigSource;
+    trustedOrigins: SystemConfigSource;
     databaseProvider: SystemConfigSource;
     databaseUrl: SystemConfigSource;
     redisUrl: SystemConfigSource;
@@ -36,6 +39,7 @@ export function getSystemConfig(): SystemConfig {
 
   return {
     ...stored,
+    auth: getAuthSettingsFrom(stored.auth),
     database: {
       ...stored.database,
       provider: provider === 'postgres' || provider === 'sqlite'
@@ -47,6 +51,18 @@ export function getSystemConfig(): SystemConfig {
       enabled: process.env.REDIS_URL?.trim() ? true : stored.redis.enabled,
     },
   };
+}
+
+function getAuthSettingsFrom(stored: SystemConfig['auth']) {
+  return resolveAuthSettings(
+    stored,
+    process.env.BETTER_AUTH_URL,
+    process.env.BETTER_AUTH_TRUSTED_ORIGINS,
+  );
+}
+
+export function getAuthSettings(): SystemConfig['auth'] {
+  return getAuthSettingsFrom(readSystemConfigWithoutSecrets().auth);
 }
 
 export function getDatabaseConfig(): DatabaseConfig {
@@ -82,6 +98,10 @@ export function getSystemConfigSnapshot(
   return {
     config,
     sources: {
+      authBaseUrl: process.env.BETTER_AUTH_URL?.trim() ? 'environment' : 'dashboard',
+      trustedOrigins: process.env.BETTER_AUTH_TRUSTED_ORIGINS?.trim()
+        ? 'environment'
+        : 'dashboard',
       databaseProvider:
         provider === 'postgres' || provider === 'sqlite' ? 'environment' : 'dashboard',
       databaseUrl: databaseUrlSource ? 'environment' : 'dashboard',

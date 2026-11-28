@@ -55,7 +55,10 @@ export default function ProviderCheckoutPage() {
     () => products.filter((product) =>
       product.status === 'active' &&
       product.category === category &&
-      sameProviderName(resolveProviderName(product.operator, product.providerAlias), providerName),
+      sameProviderName(
+        resolveProviderName(product.operator, product.providerAlias, product.storefrontGroup),
+        providerName,
+      ),
     ),
     [category, products, providerName],
   );

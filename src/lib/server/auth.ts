@@ -6,24 +6,23 @@ import { phoneNumber } from 'better-auth/plugins';
 import { accounts, sessions, users, verifications } from './db/schema';
 import { getDatabase } from './db/client';
 import { databaseMode } from './db/database-mode';
+import { getAuthSettings } from './system-config';
 import { sendWhatsAppOtp } from './whatsapp';
 import { DEFAULT_STORE_NAME } from '@/lib/store-branding';
 import { syntheticEmailForPhone } from '@/lib/synthetic-email';
 
-const baseURL = process.env.BETTER_AUTH_URL ?? 'http://localhost:3000';
-const trustedOrigins = [
-  new URL(baseURL).origin,
-  ...(process.env.BETTER_AUTH_TRUSTED_ORIGINS ?? '')
-    .split(',')
-    .map((origin) => origin.trim())
-    .filter(Boolean),
-];
-
-const createAuth = (secret: string) =>
-  betterAuth({
+const createAuth = (secret: string) => {
+  const settings = getAuthSettings();
+  return betterAuth({
     appName: DEFAULT_STORE_NAME,
-    baseURL,
-    trustedOrigins: [...new Set(trustedOrigins)],
+    baseURL: settings.baseUrl,
+    trustedOrigins: async () => {
+      const current = getAuthSettings();
+      return [...new Set([
+        new URL(current.baseUrl).origin,
+        ...current.trustedOrigins,
+      ])];
+    },
     secret,
     database: drizzleAdapter(getDatabase(), {
       provider: databaseMode === 'postgres' ? 'pg' : 'sqlite',
@@ -78,6 +77,7 @@ const createAuth = (secret: string) =>
       }),
     ],
   });
+};
 
 type AuthInstance = ReturnType<typeof createAuth>;
 let authInstance: AuthInstance | undefined;
@@ -92,4 +92,8 @@ export function getAuth(): AuthInstance {
 
   authInstance = createAuth(secret);
   return authInstance;
+}
+
+export function refreshAuthConfig() {
+  authInstance = undefined;
 }

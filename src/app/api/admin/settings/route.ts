@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuth } from '@/lib/server/auth';
+import { getAuthSettings } from '@/lib/server/system-config';
 import {
   getIntegrationConfig,
   getDigiflazzAutoSyncConfig,
@@ -19,7 +20,7 @@ export const runtime = 'nodejs';
 // built from the configured public origin, not from the request, so the value is
 // correct even when the dashboard is opened over localhost.
 function resolveWebhookBaseUrl() {
-  const configured = process.env.BETTER_AUTH_URL?.trim();
+  const configured = getAuthSettings().baseUrl.trim();
   try {
     return new URL(configured ?? 'http://localhost:3000').origin;
   } catch {
@@ -72,6 +73,9 @@ function snapshotResponse(
       showProducts: values.digiflazzShowProducts !== 'false',
       showProductsSource: sources.digiflazzShowProducts,
       showProductsEditable: sources.digiflazzShowProducts !== 'environment',
+      postpaidEnabled: values.digiflazzPostpaidEnabled === 'true',
+      postpaidEnabledSource: sources.digiflazzPostpaidEnabled,
+      postpaidEnabledEditable: sources.digiflazzPostpaidEnabled !== 'environment',
       webhookSecret: status('digiflazzWebhookSecret'),
       webhookUrl: `${webhookBaseUrl}/api/digiflazz/webhook`,
       autoSync,
@@ -110,6 +114,9 @@ function snapshotResponse(
       showProducts: values.tokovoucherShowProducts !== 'false',
       showProductsSource: sources.tokovoucherShowProducts,
       showProductsEditable: sources.tokovoucherShowProducts !== 'environment',
+      postpaidEnabled: values.tokovoucherPostpaidEnabled === 'true',
+      postpaidEnabledSource: sources.tokovoucherPostpaidEnabled,
+      postpaidEnabledEditable: sources.tokovoucherPostpaidEnabled !== 'environment',
       webhookUrl: `${webhookBaseUrl}/api/tokovoucher/webhook`,
       autoSync: tokoVoucherAutoSync,
     },
@@ -261,6 +268,13 @@ export async function PUT(request: NextRequest) {
       value !== 'false'
     ) {
       return NextResponse.json({ error: 'INVALID_VENDOR_SWITCH' }, { status: 400 });
+    }
+    if (
+      (name === 'digiflazzPostpaidEnabled' || name === 'tokovoucherPostpaidEnabled') &&
+      value !== 'true' &&
+      value !== 'false'
+    ) {
+      return NextResponse.json({ error: 'INVALID_TRANSACTION_FLAG' }, { status: 400 });
     }
     if (
       (name === 'digiflazzWebhookSecret' || name === 'tokovoucherWebhookSecret') &&

@@ -19,6 +19,37 @@ data. **Do not switch the database of a live deployment without a complete
 backup, restore, and cutover procedure rehearsed in staging.** Keep payments
 disabled until that procedure has passed.
 
+## Admin > Pengaturan > Integrasi Frontend
+
+The separate frontend integration panel manages the backend's public
+`BETTER_AUTH_URL`, the browser origins allowed by Better Auth, and a dedicated
+frontend API secret. The URL and origin list are stored with the system
+configuration; changes to the backend URL rebuild the in-process auth instance
+immediately. A non-empty `BETTER_AUTH_URL` or `BETTER_AUTH_TRUSTED_ORIGINS`
+environment value overrides and locks its dashboard field. The trusted-origin
+environment value is comma-separated; the dashboard accepts one origin per line.
+
+| Dashboard value | Environment override |
+| --- | --- |
+| Backend auth URL | `BETTER_AUTH_URL` |
+| Trusted frontend origins | `BETTER_AUTH_TRUSTED_ORIGINS` |
+
+The frontend API secret is a separate credential from `BETTER_AUTH_SECRET`. It
+is encrypted in the integration settings store and the dashboard reveals a newly
+generated value only in the generation response. Rotation immediately invalidates
+the prior value. Keep it in the server-side secret store for PPOB-Frontend and
+send it only as `x-frontend-api-secret` from that app's server-side proxy. Never
+put it in browser code or a `NEXT_PUBLIC_*` variable. The backend API origin is
+public configuration, not a secret.
+
+External browser API requests are rejected unless the secret is configured and
+the request supplies the valid header (`503` when no secret is configured,
+`401` when the header is missing or invalid). Requests without external browser
+origin signals, including provider webhooks, continue through their existing
+route-specific authentication. This secret does not replace user sessions or
+webhook signatures. The current PPOB-Frontend rewrite does not add the header,
+so its API calls will fail until its server-side proxy is updated.
+
 ## Admin > Pengaturan > Sistem
 
 The dashboard stores its choices in `.data/system-config.json` (override the
@@ -298,6 +329,12 @@ docker compose logs --tail=100 app payment-reconciler
 The `tls` profile starts Caddy, which obtains a certificate automatically. DNS
 must already resolve to this host and ports 80/443 must be reachable, otherwise
 the certificate request fails and Caddy retries with backoff.
+
+The app and Caddy health checks use `/api/health`, which returns `200` even when
+the built-in storefront is disabled. Do not change the Caddy health check back
+to `/`: the storefront switch redirects public pages to `/admin/login`, and a
+reverse-proxy health check that does not follow redirects would mark the app
+unhealthy and return `503` for all requests.
 
 ### 6. Bootstrap the admin
 

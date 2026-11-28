@@ -6,7 +6,10 @@
 export function resolveProviderName(
   operator: string,
   aliasOf?: string | null,
+  storefrontGroup?: string | null,
 ): string {
+  const manualGroup = storefrontGroup?.trim();
+  if (manualGroup) return manualGroup;
   const alias = aliasOf?.trim();
   return alias ? alias : operator.trim();
 }
@@ -15,12 +18,44 @@ export function providerGroupKey(
   category: string,
   operator: string,
   aliasOf?: string | null,
+  storefrontGroup?: string | null,
 ): string {
-  return `${category}:${resolveProviderName(operator, aliasOf).toLocaleLowerCase('id-ID')}`;
+  return `${category}:${resolveProviderName(operator, aliasOf, storefrontGroup).toLocaleLowerCase('id-ID')}`;
 }
 
 // Case-insensitive equality used when matching a route segment or a filter value
 // against the resolved provider name.
 export function sameProviderName(a: string, b: string) {
   return a.trim().toLocaleLowerCase('id-ID') === b.trim().toLocaleLowerCase('id-ID');
+}
+
+export function isProductInProviderGroup(
+  product: {
+    category: string;
+    operator: string;
+    providerAlias?: string | null;
+    storefrontGroup?: string | null;
+  },
+  category: string,
+  providerName: string,
+) {
+  return product.category === category && sameProviderName(
+    resolveProviderName(product.operator, product.providerAlias, product.storefrontGroup),
+    providerName,
+  );
+}
+
+export function getStorefrontGroupOptions(
+  products: readonly { category: string; storefrontGroup?: string | null }[],
+  category: string,
+) {
+  const labels = new Map<string, string>();
+  for (const product of products) {
+    if (product.category !== category) continue;
+    const label = product.storefrontGroup?.trim();
+    if (!label) continue;
+    const key = label.toLocaleLowerCase('id-ID');
+    if (!labels.has(key)) labels.set(key, label);
+  }
+  return [...labels.values()].sort((a, b) => a.localeCompare(b, 'id'));
 }

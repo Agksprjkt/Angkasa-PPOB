@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { guardExternalFrontendApi } from '@/lib/server/frontend-api-guard';
 import { getStorefrontEnabled } from '@/lib/server/system-config';
 
 // Runs on every page request so a dashboard change applies immediately. Next
@@ -27,7 +28,10 @@ function isAllowedPath(pathname: string) {
   ) || staticFilePattern.test(pathname);
 }
 
-export function proxy(request: NextRequest) {
+export async function proxy(request: NextRequest) {
+  const frontendApiResponse = await guardExternalFrontendApi(request);
+  if (frontendApiResponse) return frontendApiResponse;
+
   if (getStorefrontEnabled()) return NextResponse.next();
 
   const { pathname } = request.nextUrl;

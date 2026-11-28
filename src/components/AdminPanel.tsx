@@ -17,6 +17,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { LoadingState } from '@/components/ui/crystal-loader';
 import IntegrationSettingsPanel from '@/components/IntegrationSettingsPanel';
+import FrontendIntegrationPanel from '@/components/FrontendIntegrationPanel';
 import PaymentMethodsPanel from '@/components/PaymentMethodsPanel';
 import StoreSettingsPanel from '@/components/StoreSettingsPanel';
 import SystemSettingsPanel from '@/components/SystemSettingsPanel';
@@ -271,6 +272,7 @@ export default function AdminPanel() {
     | 'settings'
     | 'transactions'
     | 'digiflazz'
+    | 'frontend-integration'
     | 'promotions'
     | 'system'
     | 'flash-sales'
@@ -639,6 +641,7 @@ export default function AdminPanel() {
     | 'settings'
     | 'transactions'
     | 'digiflazz'
+    | 'frontend-integration'
     | 'promotions'
     | 'system'
     | 'flash-sales';
@@ -671,6 +674,7 @@ export default function AdminPanel() {
       label: 'Pengaturan',
       items: [
         { id: 'digiflazz', label: 'Integrasi API', icon: Plug },
+        { id: 'frontend-integration', label: 'Integrasi Frontend', icon: ExternalLink },
         { id: 'system', label: 'Sistem', icon: Database },
       ],
     },
@@ -1972,6 +1976,10 @@ export default function AdminPanel() {
       {/* TAB 7: SERVER-SIDE INTEGRATION SETTINGS */}
       {activeAdminTab === 'digiflazz' && (
         <IntegrationSettingsPanel />
+      )}
+
+      {activeAdminTab === 'frontend-integration' && (
+        <FrontendIntegrationPanel />
       )}
 
       {activeAdminTab === 'system' && (

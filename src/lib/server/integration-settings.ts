@@ -48,6 +48,7 @@ const settingNames = [
   'digiflazzWebhookSecret',
   'tokovoucherEnabled',
   'tokovoucherWebhookSecret',
+  'frontendApiSecret',
   // Dashboard visibility only: hides a vendor's products from the admin list
   // without touching orders or the storefront catalogue.
   'digiflazzShowProducts',
@@ -110,6 +111,7 @@ export const integrationSettingEnvironmentNames: Record<
   digiflazzWebhookSecret: 'DIGIFLAZZ_WEBHOOK_SECRET',
   tokovoucherEnabled: 'TOKOVOUCHER_ENABLED',
   tokovoucherWebhookSecret: 'TOKOVOUCHER_WEBHOOK_SECRET',
+  frontendApiSecret: null,
   digiflazzShowProducts: 'DIGIFLAZZ_SHOW_PRODUCTS',
   tokovoucherShowProducts: 'TOKOVOUCHER_SHOW_PRODUCTS',
   digiflazzPostpaidEnabled: 'DIGIFLAZZ_POSTPAID_ENABLED',
@@ -189,6 +191,7 @@ export function isIntegrationSettingEnvironmentOverridden(
 }
 
 export const internalIntegrationSettingNames = [
+  'frontendApiSecret',
   'digiflazzAutoSyncEnabled',
   'digiflazzAutoSyncIntervalDays',
   'digiflazzAutoSyncNextRunAt',

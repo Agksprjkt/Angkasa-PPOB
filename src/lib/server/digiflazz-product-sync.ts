@@ -179,6 +179,7 @@ export async function syncDigiflazzProducts(): Promise<DigiflazzAutoSyncResult> 
         .values(batch)
         .onConflictDoUpdate({
           target: [productTable.vendor, productTable.vendorCode],
+          // Storefront groups and promo labels are admin-managed, not vendor data.
           set: {
             name: sql`excluded."name"`,
             category: sql`excluded."category"`,
@@ -273,6 +274,7 @@ export async function syncDigiflazzPostpaidProducts(): Promise<DigiflazzAutoSync
         .values(batch)
         .onConflictDoUpdate({
           target: [productTable.vendor, productTable.vendorCode],
+          // Preserve per-product storefront groups and promo labels on resync.
           set: {
             name: sql`excluded."name"`,
             operator: sql`excluded."operator"`,
