@@ -91,6 +91,7 @@ function snapshotResponse(
       enabled: values.qrislyEnabled === 'true',
       enabledSource: sources.qrislyEnabled,
       enabledEditable: sources.qrislyEnabled !== 'environment',
+      webhookSecret: status('qrislyWebhookSecret'),
       activePaymentGateway: values.activePaymentGateway ?? 'qrisly',
       activePaymentGatewaySource: sources.activePaymentGateway,
       activePaymentGatewayEditable: sources.activePaymentGateway !== 'environment',
@@ -281,6 +282,15 @@ export async function PUT(request: NextRequest) {
       value.length < 16
     ) {
       return NextResponse.json({ error: 'WEBHOOK_SECRET_TOO_SHORT' }, { status: 400 });
+    }
+    if (
+      name === 'qrislyWebhookSecret' &&
+      Buffer.byteLength(value, 'utf8') < 32
+    ) {
+      return NextResponse.json(
+        { error: 'QRISLY_WEBHOOK_SECRET_TOO_SHORT' },
+        { status: 400 },
+      );
     }
     if (
       (name === 'qrislyMode' && value !== 'sandbox' && value !== 'production') ||

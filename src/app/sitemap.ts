@@ -2,11 +2,12 @@ import type { MetadataRoute } from 'next';
 import { asc, eq } from 'drizzle-orm';
 import { getDatabase } from '@/lib/server/db/client';
 import { products } from '@/lib/server/db/schema';
+import { getAuthSettings } from '@/lib/server/system-config';
 
 export const dynamic = 'force-dynamic';
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const baseUrl = process.env.BETTER_AUTH_URL ?? 'http://localhost:3000';
+  const baseUrl = getAuthSettings().baseUrl;
   const activeProducts = await getDatabase()
     .select({ category: products.category, operator: products.operator })
     .from(products)

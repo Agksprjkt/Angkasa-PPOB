@@ -6,6 +6,7 @@ import {
   frontendApiSecretMatches,
   normalizeAuthBaseUrl,
   parseFrontendOrigins,
+  resolveTrustedOrigins,
 } from '../src/lib/frontend-integration.ts';
 
 test('auth base URL accepts only an HTTP origin', () => {
@@ -26,6 +27,21 @@ test('trusted frontend origins are normalized, deduplicated and bounded', () => 
   assert.throws(() => parseFrontendOrigins(
     Array.from({ length: 33 }, (_, index) => `https://shop${index}.example.com`).join('\n'),
   ));
+});
+
+test('trusted origins always include the application origin without a wildcard', () => {
+  assert.deepEqual(
+    resolveTrustedOrigins('https://api.example.com/', [
+      'https://shop.example.com',
+      'https://shop.example.com/',
+    ]),
+    ['https://api.example.com', 'https://shop.example.com'],
+  );
+  assert.deepEqual(
+    resolveTrustedOrigins('https://api.example.com', []),
+    ['https://api.example.com'],
+  );
+  assert.throws(() => resolveTrustedOrigins('https://api.example.com', ['*']));
 });
 
 test('external API requests are identified from origin or referrer', () => {

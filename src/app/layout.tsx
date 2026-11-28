@@ -6,6 +6,7 @@ import ToastContainer from '@/components/ToastContainer';
 import CookieConsent from '@/components/CookieConsent';
 import ChatSupportButton from '@/components/ChatSupportButton';
 import { getStoreSettings } from '@/lib/server/store-settings';
+import { getAuthSettings } from '@/lib/server/system-config';
 import { resolveSeo, storeAssetUrl } from '@/lib/seo';
 
 export const dynamic = 'force-dynamic';
@@ -20,7 +21,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const faviconFile = settings.faviconFile ?? iconFile;
   const icon = storeAssetUrl(iconFile) ?? '/icons/icon-192.png';
   const favicon = storeAssetUrl(faviconFile) ?? '/icons/icon.svg';
-  const baseUrl = new URL(process.env.BETTER_AUTH_URL ?? 'http://localhost:3000');
+  const baseUrl = new URL(getAuthSettings().baseUrl);
   const noIndex = settings.seoNoIndex;
   const images = seo.imageUrl
     ? [{ url: seo.imageUrl, alt: seo.imageAlt }]
@@ -84,7 +85,7 @@ export default async function RootLayout({
   children: React.ReactNode;
 }) {
   const settings = await getStoreSettings();
-  const baseUrl = new URL(process.env.BETTER_AUTH_URL ?? 'http://localhost:3000');
+  const baseUrl = new URL(getAuthSettings().baseUrl);
   const logoUrl = storeAssetUrl(settings.iconFile ?? settings.logoFile);
   // One graph for the store as a whole: search engines read the site name and
   // the merchant identity from here instead of guessing from page markup.

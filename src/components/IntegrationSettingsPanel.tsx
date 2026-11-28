@@ -93,6 +93,7 @@ type SettingsSnapshot = {
   };
   qrisly: {
     apiKey: SettingStatus;
+    webhookSecret: SettingStatus;
     qrisId: string;
     qrisIdSource: SettingStatus['source'];
     qrisIdEditable: boolean;
@@ -168,6 +169,7 @@ const sectionSettings: Record<IntegrationSection, string[]> = {
     'qrislyQrisId',
     'qrislyMode',
     'qrislyEnabled',
+    'qrislyWebhookSecret',
     'activePaymentGateway',
   ],
   tokovoucher: [
@@ -382,6 +384,7 @@ export default function IntegrationSettingsPanel({
   const [isSavingAutoSync, setIsSavingAutoSync] = useState(false);
   const [autoSyncDialogError, setAutoSyncDialogError] = useState('');
   const [qrislyApiKey, setQrislyApiKey] = useState('');
+  const [qrislyWebhookSecret, setQrislyWebhookSecret] = useState('');
   const [tokovoucherMemberCode, setTokovoucherMemberCode] = useState('');
   const [tokovoucherSecret, setTokovoucherSecret] = useState('');
   const [tokovoucherDefaultSignature, setTokovoucherDefaultSignature] = useState('');
@@ -708,6 +711,7 @@ export default function IntegrationSettingsPanel({
       }
     } else {
       if (qrislyApiKey) values.qrislyApiKey = qrislyApiKey;
+      if (qrislyWebhookSecret) values.qrislyWebhookSecret = qrislyWebhookSecret;
       if (snapshot.qrisly.qrisIdEditable) values.qrislyQrisId = qrislyQrisId;
       if (snapshot.qrisly.modeEditable) values.qrislyMode = qrislyMode;
       if (snapshot.qrisly.enabledEditable) values.qrislyEnabled = String(qrislyEnabled);
@@ -750,6 +754,7 @@ export default function IntegrationSettingsPanel({
         setTokovoucherDefaultSignature('');
       } else {
         setQrislyApiKey('');
+        setQrislyWebhookSecret('');
       }
       const sectionLabel = section === 'whatsapp'
         ? 'WhatsApp OTP'
@@ -1848,9 +1853,8 @@ export default function IntegrationSettingsPanel({
             className="space-y-5 border-t border-slate-200 p-5"
           >
             <p className="text-sm text-slate-500">
-              Pembayaran dipastikan melalui polling server Qrisly dan nominalnya
-              harus cocok. Webhook tetap nonaktif sampai autentikasinya
-              diverifikasi.
+              Pembayaran tetap diverifikasi lewat server Qrisly dan nominal yang cocok.
+              Callback tidak menggantikan pemeriksaan status pembayaran ke Qrisly.
             </p>
             <div className="space-y-1.5">
               <Label htmlFor="active-payment-gateway">Gateway pembayaran online untuk checkout</Label>
@@ -1924,6 +1928,26 @@ export default function IntegrationSettingsPanel({
                 aria-label="Aktifkan Qrisly untuk deposit"
               />
             </div>
+          </div>
+          <div className="space-y-3 rounded-lg border border-slate-200 p-4">
+            <SecretField
+              id="qrisly-webhook-secret"
+              label="Secret callback webhook Qrisly"
+              status={snapshot.qrisly.webhookSecret}
+              value={qrislyWebhookSecret}
+              onChange={setQrislyWebhookSecret}
+              clear={clearSettings.includes('qrislyWebhookSecret')}
+              onClearChange={(checked) => toggleClear('qrislyWebhookSecret', checked)}
+              generating={generatingSecret === 'qrislyWebhookSecret'}
+              onGenerate={async () => {
+                const value = await generateSecretFor('qrislyWebhookSecret');
+                if (value) setQrislyWebhookSecret(value);
+              }}
+            />
+            <p className="text-xs text-slate-500">
+              Minimal 32 byte. Dipakai untuk header <code>x-webhook-secret</code> pada callback;
+              status pembayaran tetap diverifikasi ulang ke Qrisly.
+            </p>
           </div>
           <div className="space-y-3 rounded-lg border border-slate-200 p-4">
             <h4 className="text-sm font-semibold">Unggah QR merchant ke Qrisly</h4>

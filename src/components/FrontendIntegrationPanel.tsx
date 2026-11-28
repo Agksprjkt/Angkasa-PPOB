@@ -223,8 +223,8 @@ export default function FrontendIntegrationPanel() {
               aria-describedby="frontend-trusted-origins-help"
             />
             <p id="frontend-trusted-origins-help" className="text-xs text-slate-500">
-              Satu origin per baris, tanpa path. Nilai ini hanya mengizinkan origin Better Auth;
-              bukan pengganti secret API.
+              Satu origin tambahan per baris, tanpa path. Origin aplikasi sendiri selalu diizinkan;
+              kosong berarti hanya origin itu. Nilai ini bukan pengganti secret API.
             </p>
           </div>
 

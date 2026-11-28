@@ -42,6 +42,13 @@ export function parseFrontendOrigins(value: string) {
   ))];
 }
 
+export function resolveTrustedOrigins(baseUrl: string, origins: readonly string[]) {
+  return [...new Set([
+    normalizeAuthBaseUrl(baseUrl),
+    ...parseFrontendOrigins(origins.join('\n')),
+  ])];
+}
+
 export function getExternalApiOrigin(
   pathname: string,
   headers: Headers,

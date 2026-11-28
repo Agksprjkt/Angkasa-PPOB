@@ -31,6 +31,7 @@ const settingNames = [
   'qrislyQrisId',
   'qrislyMode',
   'qrislyEnabled',
+  'qrislyWebhookSecret',
   'activePaymentGateway',
   'tokovoucherMemberCode',
   'tokovoucherSecret',
@@ -94,6 +95,7 @@ export const integrationSettingEnvironmentNames: Record<
   qrislyQrisId: 'QRISLY_ID',
   qrislyMode: 'QRISLY_MODE',
   qrislyEnabled: 'QRISLY_ENABLED',
+  qrislyWebhookSecret: 'QRISLY_WEBHOOK_SECRET',
   activePaymentGateway: 'ACTIVE_PAYMENT_GATEWAY',
   tokovoucherMemberCode: 'TOKOVOUCHER_MEMBER_CODE',
   tokovoucherSecret: 'TOKOVOUCHER_SECRET',
@@ -149,6 +151,23 @@ export async function getIntegrationConfig(): Promise<IntegrationConfig> {
   }
 
   return { values, sources };
+}
+
+export async function getQrislyWebhookSecret() {
+  const environmentValue = process.env.QRISLY_WEBHOOK_SECRET;
+  if (environmentValue?.trim()) {
+    return resolveIntegrationSetting(environmentValue, undefined);
+  }
+
+  const [row] = await getDatabase()
+    .select({ encryptedValue: integrationSettings.encryptedValue })
+    .from(integrationSettings)
+    .where(eq(integrationSettings.name, 'qrislyWebhookSecret'))
+    .limit(1);
+  const dashboardValue = row
+    ? decryptIntegrationSetting('qrislyWebhookSecret', row.encryptedValue)
+    : undefined;
+  return resolveIntegrationSetting(environmentValue, dashboardValue);
 }
 
 export async function saveIntegrationSettings(

@@ -7,6 +7,7 @@ import { accounts, sessions, users, verifications } from './db/schema';
 import { getDatabase } from './db/client';
 import { databaseMode } from './db/database-mode';
 import { getAuthSettings } from './system-config';
+import { resolveTrustedOrigins } from '@/lib/frontend-integration';
 import { sendWhatsAppOtp } from './whatsapp';
 import { DEFAULT_STORE_NAME } from '@/lib/store-branding';
 import { syntheticEmailForPhone } from '@/lib/synthetic-email';
@@ -18,10 +19,7 @@ const createAuth = (secret: string) => {
     baseURL: settings.baseUrl,
     trustedOrigins: async () => {
       const current = getAuthSettings();
-      return [...new Set([
-        new URL(current.baseUrl).origin,
-        ...current.trustedOrigins,
-      ])];
+      return resolveTrustedOrigins(current.baseUrl, current.trustedOrigins);
     },
     secret,
     database: drizzleAdapter(getDatabase(), {
