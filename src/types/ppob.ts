@@ -62,6 +62,10 @@ export interface Product {
   // Optional short label displayed above this product's storefront card.
   promoBadge?: string | null;
   status: 'active' | 'inactive';
+  // Set when the outage switch or an admin turned the product off. 'system' means
+  // the vendor sync may turn it back on by itself.
+  disabledBy?: 'system' | 'admin' | null;
+  disabledReason?: string | null;
   vendor: ProductVendor;
   // Storefront source marker, e.g. "Server 1". Empty = show the vendor name.
   vendorLabel?: string | null;

@@ -24,6 +24,11 @@ import {
   type DigiflazzAutoSyncResult,
 } from '@/lib/server/integration-settings';
 import { acquireRedisLease } from '@/lib/server/redis';
+import {
+  disableProductsByVendorCodes,
+  reviveProductsAvailableAtVendor,
+} from '@/lib/server/product-health';
+import { isVendorOutage } from '@/lib/product-health';
 import type { ProductCategory } from '@/types/ppob';
 
 const syncLockKey = 'ppob:lock:digiflazz-product-sync';
@@ -47,6 +52,14 @@ function getCategory(value: unknown): ProductCategory | null {
 
 function isProviderUnavailable(value: unknown) {
   return value === false || value === 'false' || value === 0;
+}
+
+// Digiflazz spells the outage state in the description when it does not flip the
+// status flag, so the text is a second signal.
+function sourceLooksDown(source: Record<string, unknown>) {
+  return isProviderUnavailable(source.buyer_product_status) ||
+    isProviderUnavailable(source.seller_product_status) ||
+    isVendorOutage(null, typeof source.desc === 'string' ? source.desc : '');
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -147,10 +160,8 @@ export async function syncDigiflazzProducts(): Promise<DigiflazzAutoSyncResult> 
         productName: name,
         category,
       });
-    const productStatus = isProviderUnavailable(source.buyer_product_status) ||
-      isProviderUnavailable(source.seller_product_status)
-      ? 'inactive'
-      : existing?.status ?? 'inactive';
+    const vendorAvailable = !sourceLooksDown(source);
+    const productStatus = vendorAvailable ? existing?.status ?? 'inactive' : 'inactive';
     const description = typeof source.desc === 'string' ? source.desc.slice(0, 1000) : '';
 
     synced.set(vendorCode, {
@@ -200,6 +211,24 @@ export async function syncDigiflazzProducts(): Promise<DigiflazzAutoSyncResult> 
         });
     }
   });
+
+  // Revival is a separate statement: the upsert above cannot tell "the vendor is
+  // healthy again" apart from "an admin turned this on", and only the system's own
+  // disables may be undone automatically.
+  await reviveProductsAvailableAtVendor(
+    'Digiflazz',
+    rows.filter((row) => row.status === 'active').map((row) => row.vendorCode),
+  );
+  // Only a product that was live and is now reported down counts as an outage.
+  // A brand-new row also lands inactive, and marking that as a system disable
+  // would make the next sync publish it without an admin.
+  await disableProductsByVendorCodes(
+    'Digiflazz',
+    rows
+      .filter((row) => row.status === 'inactive' && existingProducts.get(row.vendorCode)?.status === 'active')
+      .map((row) => row.vendorCode),
+    'Ditutup penyedia (price list Digiflazz)',
+  );
 
   const created = rows.filter((product) => !existingProducts.has(product.vendorCode)).length;
   return {

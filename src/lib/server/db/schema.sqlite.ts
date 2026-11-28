@@ -136,6 +136,13 @@ export const products = sqliteTable(
     // Per-product storefront grouping; does not change the provider operator.
     storefrontGroup: text('storefrontGroup'),
     promoBadge: text('promoBadge'),
+    // Health tracking for the automatic outage switch. 'admin' marks a manual
+    // decision, which the vendor sync must never override.
+    disabledBy: text('disabledBy').$type<'system' | 'admin'>(),
+    disabledReason: text('disabledReason'),
+    disabledAt: integer('disabledAt', { mode: 'timestamp_ms' }),
+    failureStreak: integer('failureStreak').notNull().default(0),
+    lastFailureAt: integer('lastFailureAt', { mode: 'timestamp_ms' }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

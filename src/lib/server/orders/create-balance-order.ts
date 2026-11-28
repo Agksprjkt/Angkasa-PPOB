@@ -21,6 +21,7 @@ import { isOrderableVendor, isVendorEnabled } from '@/lib/vendor-registry';
 import { createTokoVoucherTransaction } from '@/lib/tokovoucher';
 import { mapTokoVoucherStatus } from '@/lib/tokovoucher-protocol';
 import { validateOrderDestination } from '@/lib/order-input-validation';
+import { recordProductOutcome } from '@/lib/server/product-health';
 import {
   buildDigiflazzCustomerNo,
   mapDigiflazzStatus,
@@ -728,6 +729,17 @@ export async function createBalanceOrder(
     }
 
     const balance = await getDatabaseBalance(input.user.id);
+    // A definitive failure is the health signal; pending stays neutral because
+    // the provider has not decided yet.
+    if (status === 'success') {
+      await recordProductOutcome(product.id, { ok: true }).catch(() => undefined);
+    } else if (status === 'failed') {
+      await recordProductOutcome(product.id, {
+        ok: false,
+        rc: vendorCode,
+        message: vendorMessage,
+      }).catch(() => undefined);
+    }
     return {
       status: status === 'pending' ? 202 : status === 'failed' ? 502 : 200,
       body: { transaction: createdTransaction, balance },

@@ -7,6 +7,7 @@ import { applyBalanceDelta } from '@/lib/server/wallet';
 import { settleFlashSaleForTransaction } from '@/lib/server/flash-sales';
 import { settleVoucherForTransaction } from '@/lib/server/vouchers';
 import { mapDigiflazzStatus, type DigiflazzTransactionResponse } from '@/lib/digiflazz-protocol';
+import { recordProductOutcome } from '@/lib/server/product-health';
 import {
   mapTokoVoucherStatus,
   type TokoVoucherTransaction,
@@ -62,7 +63,8 @@ async function applyProviderTransactionStatus(
     rawTime: new Date().toISOString(),
   };
 
-  return getDatabase().transaction(async (tx) => {
+  let settledProductId: string | null = null;
+  const applied = await getDatabase().transaction(async (tx) => {
     const [updated] = await tx
       .update(transactions)
       .set({
@@ -80,6 +82,7 @@ async function applyProviderTransactionStatus(
       .returning({
         id: transactions.id,
         userId: transactions.userId,
+        productId: transactions.productId,
         amount: transactions.amount,
         referenceId: transactions.referenceId,
         productName: transactions.productName,
@@ -87,6 +90,7 @@ async function applyProviderTransactionStatus(
         invoiceId: transactions.invoiceId,
       });
     if (!updated) return false;
+    settledProductId = updated.productId;
 
     await settleFlashSaleForTransaction(
       tx,
@@ -145,4 +149,14 @@ async function applyProviderTransactionStatus(
 
     return true;
   });
+
+  if (applied) {
+    await recordProductOutcome(
+      settledProductId,
+      status === 'success'
+        ? { ok: true }
+        : { ok: false, rc: response.code, message: response.message },
+    ).catch(() => undefined);
+  }
+  return applied;
 }

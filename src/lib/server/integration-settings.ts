@@ -246,7 +246,7 @@ export async function getDigiflazzAutoSyncConfig() {
   const intervalValue = Number(values.digiflazzAutoSyncIntervalDays);
   const intervalDays = (values.digiflazzAutoSyncIntervalDays
     ? intervalValue
-    : 7) as DigiflazzAutoSyncInterval;
+    : 1) as DigiflazzAutoSyncInterval;
   if (
     !digiflazzAutoSyncIntervals.includes(
       intervalDays as DigiflazzAutoSyncInterval,
@@ -274,7 +274,9 @@ export async function getDigiflazzAutoSyncConfig() {
     }
   }
   return {
-    enabled: values.digiflazzAutoSyncEnabled === 'true',
+    // Default on: a daily sync is what keeps the outage switch honest, so an
+    // untouched install gets it without the admin finding the toggle first.
+    enabled: values.digiflazzAutoSyncEnabled !== 'false',
     intervalDays,
     enabledSource: sources.digiflazzAutoSyncEnabled,
     intervalSource: sources.digiflazzAutoSyncIntervalDays,
@@ -363,7 +365,7 @@ export async function getTokoVoucherAutoSyncConfig() {
   const intervalValue = Number(values.tokovoucherAutoSyncIntervalDays);
   const intervalDays = (values.tokovoucherAutoSyncIntervalDays
     ? intervalValue
-    : 7) as DigiflazzAutoSyncInterval;
+    : 1) as DigiflazzAutoSyncInterval;
   if (
     !digiflazzAutoSyncIntervals.includes(
       intervalDays as DigiflazzAutoSyncInterval,

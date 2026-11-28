@@ -8,6 +8,7 @@ import { getDatabase } from '@/lib/server/db/client';
 import { productProviderSettings, products } from '@/lib/server/db/schema';
 import { getVendorRuntimeConfig } from '@/lib/server/integration-settings';
 import { parseBulkStatusInput } from '@/lib/product-bulk-update';
+import { adminStatusUpdate } from '@/lib/server/product-status';
 
 export const runtime = 'nodejs';
 
@@ -227,7 +228,7 @@ export async function PATCH(request: NextRequest) {
     try {
       const updated = await getDatabase()
         .update(products)
-        .set({ status: parsed.input.status, updatedAt: new Date() })
+        .set(adminStatusUpdate(parsed.input.status))
         .where(inArray(products.id, parsed.input.ids))
         .returning();
       await invalidateCatalog();
@@ -333,7 +334,15 @@ export async function PATCH(request: NextRequest) {
 
     const [product] = await db
       .update(products)
-      .set({ ...normalizedUpdates, ...variantUpdate, updatedAt: new Date() })
+      .set({
+        ...normalizedUpdates,
+        ...variantUpdate,
+        // A manual status change must outrank the automatic outage switch.
+        ...(updates.status === 'active' || updates.status === 'inactive'
+          ? adminStatusUpdate(updates.status)
+          : {}),
+        updatedAt: new Date(),
+      })
       .where(eq(products.id, payload.id))
       .returning();
     if (!product) {

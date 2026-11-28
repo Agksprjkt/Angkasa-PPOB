@@ -23,6 +23,10 @@ import {
   type DigiflazzAutoSyncResult,
 } from '@/lib/server/integration-settings';
 import { acquireRedisLease } from '@/lib/server/redis';
+import {
+  disableProductsByVendorCodes,
+  reviveProductsAvailableAtVendor,
+} from '@/lib/server/product-health';
 
 const syncLockKey = 'ppob:lock:tokovoucher-product-sync';
 const syncLockTtlMs = 10 * 60 * 1000;
@@ -103,7 +107,6 @@ export async function syncTokoVoucherProducts(): Promise<DigiflazzAutoSyncResult
     const productStatus = source.active
       ? existing?.status ?? 'inactive'
       : 'inactive';
-
     synced.set(source.code, {
       id: existing?.id ?? randomUUID(),
       vendorCode: source.code,
@@ -150,6 +153,20 @@ export async function syncTokoVoucherProducts(): Promise<DigiflazzAutoSyncResult
         });
     }
   });
+
+  // Same two-step as Digiflazz: only a product that was live and is now reported
+  // down counts as an outage, and only system disables are revived automatically.
+  await reviveProductsAvailableAtVendor(
+    'TokoVoucher',
+    rows.filter((row) => row.status === 'active').map((row) => row.vendorCode),
+  );
+  await disableProductsByVendorCodes(
+    'TokoVoucher',
+    rows
+      .filter((row) => row.status === 'inactive' && existingProducts.get(row.vendorCode)?.status === 'active')
+      .map((row) => row.vendorCode),
+    'Ditutup penyedia (katalog TokoVoucher)',
+  );
 
   const created = rows.filter((product) => !existingProducts.has(product.vendorCode)).length;
   return {

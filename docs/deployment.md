@@ -535,12 +535,16 @@ back.
 
 ## Digiflazz product auto-sync
 
-Product auto-sync is disabled by default. In the Admin dashboard's Digiflazz
-settings, enable it and confirm an interval of 7, 14, or 30 days. The first
-scheduled sync runs after the selected interval; manual sync remains available.
-Successful syncs update the Digiflazz base price and recalculate customer and
-Member prices using their separate markup rules. Newly imported products remain
-inactive.
+Product auto-sync is on by default at an interval of 1 day. In the Admin
+dashboard's Digiflazz settings it can be switched off or moved to 1, 7, 14, or
+30 days. The first scheduled sync runs after the selected interval; manual sync
+remains available. Successful syncs update the Digiflazz base price and
+recalculate customer and Member prices using their separate markup rules. Newly
+imported products remain inactive.
+
+The daily default exists because the sync is also what re-checks provider
+availability: a product the vendor reports as closed is switched off, and one it
+reports as open again is switched back on (see the outage switch below).
 
 The `payment-reconciler` worker checks whether a product sync is due once a
 minute. Keep that worker running for scheduled sync to work. In Docker Compose,
@@ -552,6 +556,25 @@ the two local worker URLs in `.env`, and run `npm run worker:payments` in a
 separate terminal while the app is running. Provider errors are recorded in
 the Digiflazz settings and retried on the next selected interval; they do not
 silently replace the last successful catalog.
+
+## Product outage switch
+
+A broken product should stop being sold before the refunds pile up, and it must
+come back without an admin remembering to look.
+
+- A failed order carrying a provider-outage code (`rc` 44/45/47/48, or a
+  "gangguan"/"maintenance" message) disables the product immediately.
+- Any other failure increments `failureStreak`; three in a row within 24 hours
+  disables it too. A failure older than the window does not count, so a product
+  that failed twice last month and once today is at one, not three.
+- A successful order clears the streak and re-enables a product the system had
+  disabled.
+- The vendor sync re-enables a product once the price list lists it again.
+
+The switch records `disabledBy` on the row. `system` means the app turned it off
+and may turn it back on; `admin` means a person did, and no sync or success will
+override that. The product table shows "Nonaktif otomatis" with the reason in
+the tooltip for the system case.
 
 ## Digiflazz webhook
 

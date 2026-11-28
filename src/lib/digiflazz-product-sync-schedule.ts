@@ -1,4 +1,4 @@
-export const digiflazzAutoSyncIntervals = [7, 14, 30] as const;
+export const digiflazzAutoSyncIntervals = [1, 7, 14, 30] as const;
 export type DigiflazzAutoSyncInterval = (typeof digiflazzAutoSyncIntervals)[number];
 
 export function isDigiflazzProductSyncDue(

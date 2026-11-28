@@ -35,7 +35,7 @@ type SettingStatus = {
 
 type AutoSyncSettings = {
   enabled: boolean;
-  intervalDays: 7 | 14 | 30;
+  intervalDays: 1 | 7 | 14 | 30;
   enabledSource: SettingStatus['source'];
   intervalSource: SettingStatus['source'];
   enabledEditable: boolean;
@@ -379,7 +379,7 @@ export default function IntegrationSettingsPanel({
   const [digiflazzMode, setDigiflazzMode] = useState('sandbox');
   const [enableRealTransactions, setEnableRealTransactions] = useState(false);
   const [digiflazzPostpaidEnabled, setDigiflazzPostpaidEnabled] = useState(false);
-  const [autoSyncIntervalDays, setAutoSyncIntervalDays] = useState<7 | 14 | 30>(7);
+  const [autoSyncIntervalDays, setAutoSyncIntervalDays] = useState<1 | 7 | 14 | 30>(1);
   const [isAutoSyncDialogOpen, setIsAutoSyncDialogOpen] = useState(false);
   const [isSavingAutoSync, setIsSavingAutoSync] = useState(false);
   const [autoSyncDialogError, setAutoSyncDialogError] = useState('');
@@ -391,7 +391,7 @@ export default function IntegrationSettingsPanel({
   const [tokovoucherMode, setTokovoucherMode] = useState('sandbox');
   const [tokovoucherRealTransactions, setTokovoucherRealTransactions] = useState(false);
   const [tokovoucherPostpaidEnabled, setTokovoucherPostpaidEnabled] = useState(false);
-  const [tokovoucherAutoSyncInterval, setTokovoucherAutoSyncInterval] = useState<7 | 14 | 30>(7);
+  const [tokovoucherAutoSyncInterval, setTokovoucherAutoSyncInterval] = useState<1 | 7 | 14 | 30>(1);
   const [digiflazzEnabled, setDigiflazzEnabled] = useState(true);
   const [digiflazzShowProducts, setDigiflazzShowProducts] = useState(true);
   const [digiflazzWebhookSecret, setDigiflazzWebhookSecret] = useState('');
@@ -934,7 +934,7 @@ export default function IntegrationSettingsPanel({
 
   const persistTokoVoucherAutoSync = async (
     enabled: boolean,
-    intervalDays: 7 | 14 | 30,
+    intervalDays: 1 | 7 | 14 | 30,
   ) => {
     try {
       const response = await fetch('/api/admin/tokovoucher/auto-sync', {
@@ -965,7 +965,7 @@ export default function IntegrationSettingsPanel({
     }
   };
 
-  const persistAutoSync = async (enabled: boolean, intervalDays: 7 | 14 | 30) => {
+  const persistAutoSync = async (enabled: boolean, intervalDays: 1 | 7 | 14 | 30) => {
     const response = await fetch('/api/admin/digiflazz/auto-sync', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -1718,7 +1718,7 @@ export default function IntegrationSettingsPanel({
                   value={tokovoucherAutoSyncInterval}
                   disabled={!snapshot.tokovoucher.autoSync.intervalEditable}
                   onChange={(event) => {
-                    const interval = Number(event.target.value) as 7 | 14 | 30;
+                    const interval = Number(event.target.value) as 1 | 7 | 14 | 30;
                     setTokovoucherAutoSyncInterval(interval);
                     if (snapshot.tokovoucher.autoSync.enabled) {
                       void persistTokoVoucherAutoSync(true, interval);
@@ -1726,6 +1726,7 @@ export default function IntegrationSettingsPanel({
                   }}
                   className="flex h-9 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-900 shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
                 >
+                  <option value={1}>1 hari</option>
                   <option value={7}>7 hari</option>
                   <option value={14}>14 hari</option>
                   <option value={30}>30 hari</option>
@@ -1778,9 +1779,10 @@ export default function IntegrationSettingsPanel({
               className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm"
               value={autoSyncIntervalDays}
               onChange={(event) =>
-                setAutoSyncIntervalDays(Number(event.target.value) as 7 | 14 | 30)
+                setAutoSyncIntervalDays(Number(event.target.value) as 1 | 7 | 14 | 30)
               }
             >
+              <option value={1}>1 hari</option>
               <option value={7}>7 hari</option>
               <option value={14}>14 hari</option>
               <option value={30}>30 hari</option>
