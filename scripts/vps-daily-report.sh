@@ -79,6 +79,15 @@ IFS='|' read -r review_count stale_count <<EOF
 $attention
 EOF
 
+# A quiet day should not ping the phone. Skip only when the whole recap would be
+# zeros: no transactions at all and nothing waiting on a human.
+if [ "$ok_count" -eq 0 ] && [ "$fail_count" -eq 0 ] && [ "$pend_count" -eq 0 ] \
+  && [ "$dep_count" -eq 0 ] && [ "$dep_stale" -eq 0 ] \
+  && [ "$review_count" -eq 0 ] && [ "$stale_count" -eq 0 ]; then
+  log "no transactions in the last 24 hours; recap skipped"
+  exit 0
+fi
+
 money() {
   printf '%s' "$1" | sed -e :a -e 's/\([0-9]\)\([0-9]\{3\}\)/\1.\2/;ta'
 }
