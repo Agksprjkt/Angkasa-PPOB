@@ -180,8 +180,9 @@ export default function FrontendIntegrationPanel() {
           <div>
             <h2 className="text-lg font-semibold text-slate-950">Origin Better Auth</h2>
             <p className="mt-1 text-sm text-slate-600">
-              Atur URL kanonis backend dan origin browser PPOB-Frontend yang diizinkan.
-              Environment VPS selalu menjadi prioritas bila nilainya diisi.
+              Origin backend dipakai untuk semua origin internal secara default. Tambahkan origin
+              lain di bawah bila ada frontend atau domain tambahan. Nilai environment VPS selalu
+              menang bila diisi.
             </p>
           </div>
 

@@ -49,6 +49,19 @@ export function resolveTrustedOrigins(baseUrl: string, origins: readonly string[
   ])];
 }
 
+/**
+ * A trusted origin belongs to this deployment, so it must reach its own login
+ * endpoint without the external frontend API secret. Anything else is treated as
+ * a separate frontend and has to authenticate.
+ */
+export function isInternalOrigin(
+  origin: string,
+  baseUrl: string,
+  origins: readonly string[],
+) {
+  return resolveTrustedOrigins(baseUrl, origins).includes(origin);
+}
+
 export function getExternalApiOrigin(
   pathname: string,
   headers: Headers,

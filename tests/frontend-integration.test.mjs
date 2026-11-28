@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   getExternalApiOrigin,
   frontendApiSecretMatches,
+  isInternalOrigin,
   normalizeAuthBaseUrl,
   parseFrontendOrigins,
   resolveTrustedOrigins,
@@ -42,6 +43,22 @@ test('trusted origins always include the application origin without a wildcard',
     ['https://api.example.com'],
   );
   assert.throws(() => resolveTrustedOrigins('https://api.example.com', ['*']));
+});
+
+test('trusted origins are internal and need no frontend API secret', () => {
+  assert.equal(
+    isInternalOrigin('https://www.api.example.com', 'https://api.example.com', [
+      'https://www.api.example.com',
+    ]),
+    true,
+  );
+  assert.equal(isInternalOrigin('https://api.example.com', 'https://api.example.com', []), true);
+  assert.equal(
+    isInternalOrigin('https://other.example.com', 'https://api.example.com', [
+      'https://www.api.example.com',
+    ]),
+    false,
+  );
 });
 
 test('external API requests are identified from origin or referrer', () => {

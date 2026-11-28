@@ -5,6 +5,7 @@ import {
   frontendApiSecretHeader,
   frontendApiSecretMatches,
   getExternalApiOrigin,
+  isInternalOrigin,
 } from '@/lib/frontend-integration';
 import { getIntegrationConfig } from './integration-settings';
 import { getAuthSettings } from './system-config';
@@ -37,6 +38,17 @@ export async function guardExternalFrontendApi(request: NextRequest) {
       request.nextUrl.origin,
       new URL(authSettings.baseUrl).origin,
     );
+    // Every trusted origin belongs to this deployment, so it must reach its own
+    // login endpoint without the frontend API secret. Comparing only the base URL
+    // locked a second host (www) out of its own auth endpoint.
+    if (
+      externalOrigin &&
+      externalOrigin !== 'cross-site' &&
+      externalOrigin !== 'invalid-origin' &&
+      isInternalOrigin(externalOrigin, authSettings.baseUrl, authSettings.trustedOrigins)
+    ) {
+      externalOrigin = null;
+    }
   } catch (error) {
     console.error(
       '[FRONTEND_API_GUARD_ORIGIN_CONFIG_FAILED]',
