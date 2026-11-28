@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowUpRight, Pause, Play } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -102,7 +102,33 @@ export default function PromotionSlider() {
     setActiveIndex((index) => (index + direction + slides.length) % slides.length);
   }, [slides.length]);
 
+  // A swipe must not also fire the banner's open-target click, so the start point
+  // and the travelled distance are tracked and the click is swallowed.
+  const swipeStart = useRef<{ x: number; y: number } | null>(null);
+  const swiped = useRef(false);
+
+  const onPointerDown = (event: ReactPointerEvent) => {
+    if (event.pointerType === 'mouse') return;
+    swipeStart.current = { x: event.clientX, y: event.clientY };
+    swiped.current = false;
+  };
+
+  const onPointerUp = (event: ReactPointerEvent) => {
+    const start = swipeStart.current;
+    swipeStart.current = null;
+    if (!start || event.pointerType === 'mouse') return;
+    const dx = event.clientX - start.x;
+    const dy = event.clientY - start.y;
+    if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy)) return;
+    swiped.current = true;
+    moveSlide(dx < 0 ? 1 : -1);
+  };
+
   const openSlideTarget = () => {
+    if (swiped.current) {
+      swiped.current = false;
+      return;
+    }
     if (activeSlide.targetPath.startsWith('#')) {
       document.querySelector(activeSlide.targetPath)?.scrollIntoView({
         behavior: reducedMotion ? 'auto' : 'smooth',
@@ -133,9 +159,9 @@ export default function PromotionSlider() {
               <Skeleton className="h-8 w-1/2 max-w-sm bg-white/70" />
               <Skeleton className="h-4 w-2/3 max-w-sm bg-white/60" />
             </div>
-            <div className="absolute inset-x-0 bottom-3 flex items-center justify-center gap-1.5 sm:bottom-4">
-              <Skeleton className="h-1.5 w-6 rounded-full bg-white/70" />
-              <Skeleton className="h-1.5 w-1.5 rounded-full bg-white/60" />
+            <div className="absolute inset-x-0 bottom-2 flex items-center justify-center gap-0.5 sm:bottom-4 sm:gap-1">
+              <Skeleton className="h-1 w-4 rounded-full bg-white/70 sm:h-1.5 sm:w-6" />
+              <Skeleton className="h-1 w-1 rounded-full bg-white/60 sm:h-1.5 sm:w-1.5" />
               <Skeleton className="h-1.5 w-1.5 rounded-full bg-white/60" />
             </div>
           </div>
@@ -148,6 +174,9 @@ export default function PromotionSlider() {
         onMouseLeave={() => setIsPaused(false)}
         onFocus={() => setIsPaused(true)}
         onBlur={() => setIsPaused(false)}
+        onPointerDown={onPointerDown}
+        onPointerUp={onPointerUp}
+        onPointerCancel={() => { swipeStart.current = null; }}
         onKeyDown={(event) => {
           if (event.key === 'ArrowLeft') {
             event.preventDefault();
@@ -158,7 +187,7 @@ export default function PromotionSlider() {
             moveSlide(1);
           }
         }}
-        className="promo-hero relative isolate overflow-hidden rounded-[1.75rem] border border-white/80 bg-gradient-to-br from-white/85 via-white/65 to-sky-50/75 text-slate-900 shadow-[0_24px_70px_-35px_rgba(74,101,178,0.28)] backdrop-blur-2xl"
+        className="promo-hero relative isolate touch-pan-y overflow-hidden rounded-[1.75rem] border border-white/80 bg-gradient-to-br from-white/85 via-white/65 to-sky-50/75 text-slate-900 shadow-[0_24px_70px_-35px_rgba(74,101,178,0.28)] backdrop-blur-2xl"
       >
         <div className="relative aspect-[1080/424] w-full">
           {hasImage ? (
@@ -215,10 +244,10 @@ export default function PromotionSlider() {
           </button>
 
           {slides.length > 1 && (
-            <div className="absolute inset-x-0 bottom-3 z-20 flex items-center justify-center gap-1 sm:bottom-4">
-              {/* The dots stay small visually but the button itself is 24px tall,
-                  otherwise a 6px pill is impossible to hit on a phone. */}
-              <div className={`flex items-center gap-1 rounded-full px-1.5 ${
+            <div className="absolute inset-x-0 bottom-2 z-20 flex items-center justify-center gap-1 sm:bottom-4">
+              {/* The dots stay small visually but each button keeps a ~20px hit
+                  area, otherwise a 4px pill is impossible to tap on a phone. */}
+              <div className={`flex items-center gap-0.5 rounded-full px-1 py-0.5 sm:gap-1 sm:px-1.5 ${
                 hasImage ? 'bg-slate-900/35 backdrop-blur-sm' : 'bg-white/70'
               }`}>
                 {slides.map((slide, index) => (
@@ -228,14 +257,14 @@ export default function PromotionSlider() {
                     onClick={() => setActiveIndex(index)}
                     aria-label={`Tampilkan promosi ${index + 1}`}
                     aria-current={index === activeIndex ? 'true' : undefined}
-                    className="flex h-6 min-w-6 items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                    className="flex h-5 min-w-5 items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white sm:h-6 sm:min-w-6"
                   >
                     <span
                       aria-hidden="true"
-                      className={`block h-1.5 rounded-full transition-all ${
+                      className={`block h-1 rounded-full transition-all sm:h-1.5 ${
                         index === activeIndex
-                          ? `w-6 ${hasImage ? 'bg-white' : 'bg-blue-700'}`
-                          : `w-1.5 ${hasImage ? 'bg-white/60' : 'bg-slate-400/70'}`
+                          ? `w-4 sm:w-6 ${hasImage ? 'bg-white' : 'bg-blue-700'}`
+                          : `w-1 sm:w-1.5 ${hasImage ? 'bg-white/60' : 'bg-slate-400/70'}`
                       }`}
                     />
                   </button>
@@ -246,13 +275,13 @@ export default function PromotionSlider() {
                 onClick={() => setIsPausedByUser((paused) => !paused)}
                 aria-label={isPausedByUser ? 'Lanjutkan promosi otomatis' : 'Jeda promosi otomatis'}
                 aria-pressed={isPausedByUser}
-                className={`flex h-6 w-6 items-center justify-center rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${
+                className={`flex h-5 w-5 items-center justify-center rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white sm:h-6 sm:w-6 ${
                   hasImage ? 'bg-slate-900/35 text-white backdrop-blur-sm' : 'bg-white/70 text-slate-700'
                 }`}
               >
                 {isPausedByUser
-                  ? <Play className="h-3 w-3" aria-hidden="true" />
-                  : <Pause className="h-3 w-3" aria-hidden="true" />}
+                  ? <Play className="h-2.5 w-2.5 sm:h-3 sm:w-3" aria-hidden="true" />
+                  : <Pause className="h-2.5 w-2.5 sm:h-3 sm:w-3" aria-hidden="true" />}
               </button>
             </div>
           )}
